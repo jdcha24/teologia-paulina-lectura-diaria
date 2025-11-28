@@ -110,7 +110,7 @@ export default function App() {
   const [notification, setNotification] = useState(null);
 
   // Datos
-  const [allReadings, setAllReadings] = useState([]); // Cambiado de todayReadings a allReadings
+  const [allReadings, setAllReadings] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
   const [completionsMap, setCompletionsMap] = useState({});
   const [commentsMap, setCommentsMap] = useState({});
@@ -251,7 +251,7 @@ export default function App() {
     });
   }, [userData]);
 
-  // Leer Comentarios (Optimizamos para leer solo de lecturas visibles o todas si no son muchas)
+  // Leer Comentarios
   useEffect(() => {
     if (!userData?.isApproved || allReadings.length === 0) return;
     // Escuchar cambios globales en comentarios para simplificar en lugar de N listeners
@@ -267,7 +267,6 @@ export default function App() {
     }, (e) => {
         // Fallback sin indice
         if (e.code === 'failed-precondition') {
-             // Reintentar sin orden
              const q2 = query(collection(db, 'artifacts', APP_ID, 'comments'));
              onSnapshot(q2, (snap) => {
                 const newMap = {};
@@ -276,7 +275,6 @@ export default function App() {
                     if (!newMap[d.readingId]) newMap[d.readingId] = [];
                     newMap[d.readingId].push({id: doc.id, ...d});
                 });
-                 // Ordenar en cliente
                  Object.keys(newMap).forEach(k => {
                      newMap[k].sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
                  });
@@ -284,9 +282,9 @@ export default function App() {
              });
         }
     });
-  }, [userData]); // Quitamos dependencia de allReadings para evitar recargas masivas
+  }, [userData]); 
 
-  // Leer Progreso (Todas mis completions)
+  // Leer Progreso
   useEffect(() => {
     if (!activeUid) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
@@ -386,7 +384,7 @@ export default function App() {
           if (!groups[r.date]) groups[r.date] = [];
           groups[r.date].push(r);
       });
-      return groups; // Objeto { "2023-11-28": [lecturas...], ... }
+      return groups; 
   };
 
   // --- RENDERS ---
@@ -598,12 +596,29 @@ export default function App() {
                                           </button>
                                       </div>
                                       
-                                      {/* Comentarios Mini */}
-                                      <div className="bg-slate-50/50 border-t px-4 py-2 flex justify-between items-center">
-                                          <button onClick={()=>setActiveReadingIdForComment(showComments?null:r.id)} className="text-xs font-medium text-slate-500 hover:text-sky-600 flex items-center gap-1">
-                                              <MessageSquare size={14}/> {comments.length > 0 ? `${comments.length} comentarios` : 'Comentar'}
+                                      {/* Comentarios Mini - MODIFICADO A BOTÓN GRANDE */}
+                                      <div className="bg-slate-50/50 border-t p-2">
+                                          <button 
+                                              onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)}
+                                              className={`flex items-center gap-2 px-4 py-2 rounded-lg w-full justify-center text-sm font-medium transition-colors ${
+                                                  showComments 
+                                                  ? 'bg-slate-200 text-slate-800' 
+                                                  : 'bg-sky-50 text-sky-600 hover:bg-sky-100'
+                                              }`}
+                                          >
+                                              <MessageSquare size={18} />
+                                              {comments.length > 0 ? `Ver ${comments.length} Comentarios` : 'Escribir un comentario'}
+                                              <ChevronDown 
+                                                  size={16} 
+                                                  className={`ml-auto transform transition-transform duration-200 ${showComments ? 'rotate-180' : ''}`} 
+                                              />
                                           </button>
-                                          {r.externalContent && <span className="text-xs text-slate-400 flex items-center gap-1"><FileText size={12}/> Contenido</span>}
+                                          
+                                          {r.externalContent && !showComments && (
+                                             <div className="text-center mt-2 text-xs text-slate-400 flex justify-center gap-1">
+                                                <FileText size={12}/> Incluye contenido de lectura
+                                             </div>
+                                          )}
                                       </div>
 
                                       {/* Área Expandible */}
@@ -625,6 +640,9 @@ export default function App() {
                                                           </div>
                                                       </div>
                                                   ))}
+                                                  {comments.length === 0 && (
+                                                      <p className="text-center text-xs text-slate-400 italic py-2">Sé el primero en compartir tu reflexión.</p>
+                                                  )}
                                               </div>
                                               <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2">
                                                   <input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe..." value={commentText} onChange={e=>setCommentText(e.target.value)}/>
