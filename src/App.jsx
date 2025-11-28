@@ -3,6 +3,7 @@ import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInWithPopup, 
+  signInAnonymously, 
   onAuthStateChanged, 
   signOut, 
   updateProfile,
@@ -28,7 +29,7 @@ import {
   BookOpen, CheckCircle, MessageSquare, Users, LogOut, Calendar, Send, Loader2, 
   PlusCircle, BarChart2, Edit3, Save, ChevronDown, Youtube, ScrollText, 
   ArrowRight, ExternalLink, Shield, ShieldAlert, ShieldCheck, Bell, X, 
-  AlertTriangle, FileText, Link as LinkIcon 
+  AlertTriangle, FileText, Link as LinkIcon, Clock, CheckSquare
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE (PRODUCCIÓN) ---
@@ -51,7 +52,7 @@ const APP_ID = 'teologia-paulina-app';
 
 // --- CONFIGURACIÓN DE IDENTIDAD ---
 const LOGO_URL = "https://i.ibb.co/rD9fNMv/1764042450953.png";
-const YOUTUBE_CHANNEL = "https://youtube.com/@teologiapaulina?si=AI-DJ0BzKtqn-fY6";
+const YOUTUBE_CHANNEL = "https://youtube.com/@teologiapaulina?si=5gwOAmgbXHh1hbgc";
 
 // --- Estructura Bíblica ---
 const BIBLE_STRUCTURE = {
@@ -109,10 +110,13 @@ export default function App() {
   const [notification, setNotification] = useState(null);
 
   // Datos
-  const [todayReadings, setTodayReadings] = useState([]);
+  const [allReadings, setAllReadings] = useState([]); // Cambiado de todayReadings a allReadings
   const [allUsers, setAllUsers] = useState([]);
   const [completionsMap, setCompletionsMap] = useState({});
   const [commentsMap, setCommentsMap] = useState({});
+
+  // Estado de UI Usuario
+  const [userFilter, setUserFilter] = useState('pending'); // 'pending' | 'completed'
 
   // Inputs
   const [commentText, setCommentText] = useState('');
@@ -122,6 +126,8 @@ export default function App() {
     externalLink: '', externalContent: '', observation: '' 
   });
   const [activeReadingIdForComment, setActiveReadingIdForComment] = useState(null);
+  const [editingReading, setEditingReading] = useState(null); // Para que el admin edite
+  const [loginName, setLoginName] = useState('');
 
   // 1. Inicializar Auth
   useEffect(() => {
@@ -146,11 +152,7 @@ export default function App() {
   // 2. Escuchar Perfil de Usuario
   useEffect(() => {
     if (!user) return;
-    
-    if (userData && userData.uid !== user.uid) {
-        setLoading(false);
-        return;
-    }
+    if (userData && userData.uid !== user.uid) { setLoading(false); return; }
 
     const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid);
     const unsubscribe = onSnapshot(userRef, (docSnap) => {
@@ -231,40 +233,72 @@ export default function App() {
   // --- LÓGICA DE DATOS ---
   const activeUid = userData?.uid;
 
+  // Leer TODAS las Lecturas (Sin filtro de fecha para ver historial)
   useEffect(() => {
     if (!userData?.isApproved) return;
-    const today = new Date().toISOString().split('T')[0];
-    const q = query(collection(db, 'artifacts', APP_ID, 'readings'), where('date', '==', today));
+    
+    const q = query(collection(db, 'artifacts', APP_ID, 'readings'));
     
     return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
-        docs.sort((a,b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
-        setTodayReadings(docs);
+        // Ordenar por fecha (descendente: lo más nuevo arriba)
+        docs.sort((a,b) => {
+            if (a.date > b.date) return -1;
+            if (a.date < b.date) return 1;
+            return 0;
+        });
+        setAllReadings(docs);
     });
   }, [userData]);
 
+  // Leer Comentarios (Optimizamos para leer solo de lecturas visibles o todas si no son muchas)
   useEffect(() => {
-    if (!userData?.isApproved || todayReadings.length === 0) return;
-    const unsubscribes = todayReadings.map(r => {
-        const q = query(collection(db, 'artifacts', APP_ID, 'comments'), where('readingId', '==', r.id));
-        return onSnapshot(q, s => {
-            const comments = s.docs.map(d => ({id: d.id, ...d.data()}));
-            comments.sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-            setCommentsMap(prev => ({...prev, [r.id]: comments}));
+    if (!userData?.isApproved || allReadings.length === 0) return;
+    // Escuchar cambios globales en comentarios para simplificar en lugar de N listeners
+    const q = query(collection(db, 'artifacts', APP_ID, 'comments'), orderBy('createdAt', 'desc'));
+    return onSnapshot(q, (snapshot) => {
+        const newMap = {};
+        snapshot.docs.forEach(doc => {
+            const d = doc.data();
+            if (!newMap[d.readingId]) newMap[d.readingId] = [];
+            newMap[d.readingId].push({id: doc.id, ...d});
         });
+        setCommentsMap(newMap);
+    }, (e) => {
+        // Fallback sin indice
+        if (e.code === 'failed-precondition') {
+             // Reintentar sin orden
+             const q2 = query(collection(db, 'artifacts', APP_ID, 'comments'));
+             onSnapshot(q2, (snap) => {
+                const newMap = {};
+                snap.docs.forEach(doc => {
+                    const d = doc.data();
+                    if (!newMap[d.readingId]) newMap[d.readingId] = [];
+                    newMap[d.readingId].push({id: doc.id, ...d});
+                });
+                 // Ordenar en cliente
+                 Object.keys(newMap).forEach(k => {
+                     newMap[k].sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+                 });
+                 setCommentsMap(newMap);
+             });
+        }
     });
-    return () => unsubscribes.forEach(u => u());
-  }, [todayReadings]);
+  }, [userData]); // Quitamos dependencia de allReadings para evitar recargas masivas
 
+  // Leer Progreso (Todas mis completions)
   useEffect(() => {
-    if (!activeUid || todayReadings.length === 0) return;
-    const unsubscribes = todayReadings.map(r => {
-        return onSnapshot(doc(db, 'artifacts', APP_ID, 'completions', `${activeUid}_${r.id}`), s => {
-            setCompletionsMap(prev => ({...prev, [r.id]: s.exists()}));
+    if (!activeUid) return;
+    const q = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
+    return onSnapshot(q, (snapshot) => {
+        const map = {};
+        snapshot.docs.forEach(doc => {
+            const data = doc.data();
+            map[data.readingId] = true;
         });
+        setCompletionsMap(map);
     });
-    return () => unsubscribes.forEach(u => u());
-  }, [activeUid, todayReadings]);
+  }, [activeUid]);
 
   useEffect(() => {
     if (userData?.role !== 'admin') return;
@@ -314,6 +348,21 @@ export default function App() {
       alert("Lectura publicada");
   };
 
+  const updateReading = async (e) => {
+      e.preventDefault();
+      if (!editingReading) return;
+      
+      const ref = doc(db, 'artifacts', APP_ID, 'readings', editingReading.id);
+      await updateDoc(ref, {
+          title: editingReading.title,
+          scripture: editingReading.scripture,
+          observation: editingReading.observation,
+          date: editingReading.date
+      });
+      setEditingReading(null);
+      alert("Lectura actualizada");
+  };
+
   const deleteReading = async (id) => {
       if(confirm('¿Borrar lectura?')) await deleteDoc(doc(db, 'artifacts', APP_ID, 'readings', id));
   };
@@ -324,12 +373,27 @@ export default function App() {
 
   const getChapters = (book) => Array.from({length: BIBLE_STRUCTURE[book]||50}, (_,i) => i+1);
 
+  // Helpers para agrupar
+  const getGroupedReadings = (filter) => {
+      const filtered = allReadings.filter(r => {
+          const isCompleted = completionsMap[r.id];
+          return filter === 'completed' ? isCompleted : !isCompleted;
+      });
+      
+      // Agrupar por fecha
+      const groups = {};
+      filtered.forEach(r => {
+          if (!groups[r.date]) groups[r.date] = [];
+          groups[r.date].push(r);
+      });
+      return groups; // Objeto { "2023-11-28": [lecturas...], ... }
+  };
+
   // --- RENDERS ---
 
   if (loading) return <div className="h-screen flex items-center justify-center bg-sky-50"><Loader2 className="animate-spin text-sky-600" size={48}/></div>;
 
   if (view === 'login') return (
-    // AGREGADO: w-full para asegurar que ocupe todo el ancho
     <div className="min-h-screen w-full bg-gradient-to-br from-sky-500 to-sky-600 flex items-center justify-center p-4">
       <Card className="w-full max-w-md p-8 border-none shadow-2xl">
         <div className="text-center mb-8">
@@ -339,7 +403,6 @@ export default function App() {
         </div>
         <div className="space-y-4">
             <Button onClick={handleGoogleLogin} variant="google" className="w-full py-3 flex gap-2 justify-center items-center">
-                {/* Icono Google SVG */}
                 <svg className="w-5 h-5" viewBox="0 0 24 24">
                     <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
                     <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
@@ -348,10 +411,7 @@ export default function App() {
                 </svg>
                 <span className="font-bold">Continuar con Google</span>
             </Button>
-            
-            <div className="text-center text-xs text-slate-400">
-                Acceso exclusivo para miembros registrados
-            </div>
+            <div className="text-center text-xs text-slate-400">Acceso exclusivo para miembros registrados</div>
         </div>
       </Card>
     </div>
@@ -361,7 +421,7 @@ export default function App() {
     <div className="h-screen flex items-center justify-center bg-sky-50 p-4">
         <Card className="max-w-md p-8 text-center">
             <h2 className="text-xl font-bold text-slate-800 mb-2">Solicitud Recibida</h2>
-            <p className="text-slate-600 mb-6">Hola <b>{userData?.displayName}</b>. Tu cuenta está pendiente de aprobación por un administrador.</p>
+            <p className="text-slate-600 mb-6">Hola <b>{userData?.displayName}</b>. Tu cuenta está pendiente de aprobación.</p>
             <Button onClick={handleLogout} variant="secondary">Cerrar Sesión</Button>
         </Card>
     </div>
@@ -371,6 +431,7 @@ export default function App() {
       <header className="bg-white border-b sticky top-0 z-10 px-4 h-16 flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-2 font-serif font-bold text-slate-800"><img src={LOGO_URL} className="w-8 h-8"/> <span className="hidden sm:inline">Teología Paulina</span></div>
           <div className="flex gap-3 items-center">
+              <a href={YOUTUBE_CHANNEL} target="_blank" rel="noopener noreferrer" className="p-2 text-red-600 hover:bg-red-50 rounded-full transition-colors" title="YouTube"><Youtube size={24} /></a>
               {userData?.role === 'admin' && (
                   <div className="flex bg-slate-100 p-1 rounded">
                       <button onClick={()=>setView('admin')} className={`px-3 py-1 text-xs rounded ${view==='admin'?'bg-white shadow text-sky-600':''}`}>Admin</button>
@@ -422,16 +483,34 @@ export default function App() {
                               <Button type="submit" variant="primary" className="w-full">Publicar</Button>
                           </form>
                       </Card>
+
                       <div className="space-y-3">
-                          <h3 className="font-bold text-slate-700">Asignado para: {newReading.date}</h3>
-                          {todayReadings.filter(r=>r.date===newReading.date).map(r=>(
-                              <Card key={r.id} className="p-3 relative group">
-                                  <button onClick={async()=>{if(confirm('Borrar?')) await deleteDoc(doc(db,'artifacts',APP_ID,'readings',r.id))}} className="absolute top-2 right-2 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100"><X size={16}/></button>
-                                  <div className="font-bold text-slate-800">{r.scripture}</div>
-                                  <div className="text-xs text-slate-500">{r.title}</div>
-                              </Card>
+                          <h3 className="font-bold text-slate-700">Historial Reciente</h3>
+                          {allReadings.slice(0, 10).map(r => (
+                              <div key={r.id} className="bg-white p-3 rounded border flex justify-between items-start">
+                                  {editingReading?.id === r.id ? (
+                                      <form onSubmit={updateReading} className="w-full space-y-2">
+                                          <input className="w-full p-1 border rounded text-sm" value={editingReading.title} onChange={e=>setEditingReading({...editingReading, title:e.target.value})} placeholder="Título"/>
+                                          <textarea className="w-full p-1 border rounded text-sm" value={editingReading.observation} onChange={e=>setEditingReading({...editingReading, observation:e.target.value})} placeholder="Observación"/>
+                                          <div className="flex gap-2 justify-end">
+                                              <button type="button" onClick={()=>setEditingReading(null)} className="text-xs text-slate-500">Cancelar</button>
+                                              <button type="submit" className="text-xs bg-sky-500 text-white px-2 py-1 rounded">Guardar</button>
+                                          </div>
+                                      </form>
+                                  ) : (
+                                      <>
+                                          <div>
+                                              <div className="font-bold text-slate-800 text-sm">{r.scripture} <span className="font-normal text-slate-400 ml-2">{r.date}</span></div>
+                                              {r.observation && <div className="text-xs text-slate-500 italic mt-1">"{r.observation}"</div>}
+                                          </div>
+                                          <div className="flex gap-2">
+                                              <button onClick={()=>setEditingReading(r)} className="text-sky-500 hover:bg-sky-50 p-1 rounded"><Edit3 size={16}/></button>
+                                              <button onClick={()=>deleteReading(r.id)} className="text-slate-300 hover:text-red-500 p-1 rounded"><X size={16}/></button>
+                                          </div>
+                                      </>
+                                  )}
+                              </div>
                           ))}
-                          {todayReadings.filter(r=>r.date===newReading.date).length===0 && <p className="text-slate-400 italic text-sm">Nada programado aún.</p>}
                       </div>
                   </div>
               )}
@@ -463,78 +542,101 @@ export default function App() {
       </div>
   );
 
+  // --- USER VIEW ---
+  const groupedReadings = getGroupedReadings(userFilter);
+  const sortedDates = Object.keys(groupedReadings).sort().reverse();
+
   return (
       <div className="min-h-screen bg-sky-50 pb-20">
           <Header/>
-          <main className="max-w-7xl mx-auto p-4 space-y-6">
-              <div className="flex justify-between items-center">
-                  <h2 className="font-serif font-bold text-xl text-slate-800">Lecturas de Hoy</h2>
-                  <span className="text-sm bg-white px-3 py-1 rounded-full shadow-sm text-slate-500">{new Date().toLocaleDateString()}</span>
-              </div>
+          <main className="max-w-3xl mx-auto p-4 space-y-6">
               
-              {todayReadings.length === 0 ? (
+              {/* Tabs Pendiente/Completado */}
+              <div className="flex p-1 bg-slate-200 rounded-lg">
+                  <button onClick={()=>setUserFilter('pending')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${userFilter==='pending'?'bg-white text-sky-600 shadow-sm':'text-slate-500'}`}>Pendientes</button>
+                  <button onClick={()=>setUserFilter('completed')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${userFilter==='completed'?'bg-white text-emerald-600 shadow-sm':'text-slate-500'}`}>Completadas</button>
+              </div>
+
+              {sortedDates.length === 0 ? (
                   <div className="text-center p-12 text-slate-400 bg-white rounded-xl border border-slate-100">
                       <ScrollText size={48} className="mx-auto mb-4 text-sky-200"/>
-                      <p>No hay lecturas asignadas para hoy.</p>
+                      <p>No hay lecturas {userFilter === 'pending' ? 'pendientes' : 'completadas'}.</p>
                   </div>
               ) : (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
-                    {todayReadings.map(r => {
-                        const isRead = completionsMap[r.id];
-                        const comments = commentsMap[r.id] || [];
-                        const showComments = activeReadingIdForComment === r.id;
-                        return (
-                            <Card key={r.id} className="overflow-hidden flex flex-col h-full">
-                                <div className={`p-6 text-white relative ${r.type==='bible'?'bg-sky-600':'bg-amber-500'}`}>
-                                    <div className="relative z-10">
-                                        <span className="text-[10px] font-bold bg-white/20 px-2 py-1 rounded uppercase tracking-wider">{r.type==='bible'?'Bíblica':'Externo'}</span>
-                                        <h3 className="text-2xl font-serif font-bold mt-2">{r.scripture}</h3>
-                                        {r.type==='bible' && <p className="opacity-90 text-sm">{r.title}</p>}
-                                    </div>
-                                    <BookOpen className="absolute right-4 bottom-4 opacity-20" size={64}/>
-                                </div>
-                                <div className="p-6 flex-1 flex flex-col">
-                                    {r.type === 'external' && (
-                                        <div className="mb-6 space-y-4">
-                                            {r.externalContent && <div className="bg-slate-50 p-4 rounded text-sm text-slate-600 line-clamp-4">{r.externalContent}</div>}
-                                            {r.externalLink && <a href={r.externalLink} target="_blank" className="flex items-center gap-2 text-sky-600 font-bold text-sm hover:underline mt-auto"><LinkIcon size={16}/> Abrir Recurso</a>}
-                                        </div>
-                                    )}
-                                    {r.observation && (
-                                        <div className="bg-amber-50 p-4 rounded border-l-4 border-amber-400 mb-6 text-sm text-slate-700 italic">
-                                            <span className="block font-bold text-xs text-amber-700 not-italic mb-1">Nota Pastoral:</span>
-                                            "{r.observation}"
-                                        </div>
-                                    )}
-                                    <div className="mt-auto">
-                                        <button onClick={()=>toggleCompletion(r.id)} className={`w-full py-3 rounded font-bold flex items-center justify-center gap-2 transition-colors ${isRead?'bg-emerald-50 text-emerald-600':'bg-slate-900 text-white hover:bg-slate-800'}`}>
-                                            {isRead ? <><CheckCircle size={18}/> Completado</> : 'Marcar como Leído'}
-                                        </button>
-                                    </div>
-                                </div>
-                                <div className="bg-slate-50 border-t p-4">
-                                    <button onClick={()=>setActiveReadingIdForComment(showComments?null:r.id)} className="text-sm text-slate-500 hover:text-sky-600 flex items-center gap-2 w-full">
-                                        <MessageSquare size={16}/> {comments.length} Comentarios <ChevronDown size={14} className={`ml-auto transform ${showComments?'rotate-180':''}`}/>
-                                    </button>
-                                    {showComments && (
-                                        <div className="mt-4 space-y-3">
-                                            <div className="max-h-60 overflow-y-auto space-y-3 pr-2">
-                                                {comments.map(c=>(
-                                                    <div key={c.id} className="bg-white p-3 rounded border text-sm">
-                                                        <div className="flex justify-between mb-1"><span className="font-bold text-slate-700">{c.userName}</span><span className="text-[10px] text-slate-400">{new Date(c.createdAt?.seconds*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span></div>
-                                                        <p className="text-slate-600">{c.text}</p>
-                                                    </div>
-                                                ))}
-                                                {comments.length===0 && <p className="text-center text-xs text-slate-400">Sin comentarios.</p>}
-                                            </div>
-                                            <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2"><input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe algo..." value={commentText} onChange={e=>setCommentText(e.target.value)}/><button type="submit" disabled={!commentText.trim()} className="bg-sky-500 text-white p-2 rounded"><Send size={16}/></button></form>
-                                        </div>
-                                    )}
-                                </div>
-                            </Card>
-                        );
-                    })}
-                  </div>
+                  sortedDates.map(date => (
+                      <div key={date} className="space-y-3">
+                          <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-wider px-2">
+                              <Calendar size={14}/> {date === new Date().toISOString().split('T')[0] ? 'Hoy' : new Date(date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
+                              <div className="h-px bg-slate-200 flex-1"></div>
+                          </div>
+                          
+                          {groupedReadings[date].map(r => {
+                              const isRead = completionsMap[r.id];
+                              const comments = commentsMap[r.id] || [];
+                              const showComments = activeReadingIdForComment === r.id;
+                              return (
+                                  <Card key={r.id} className="overflow-hidden">
+                                      <div className={`p-4 flex justify-between items-start ${r.type==='bible'?'bg-white border-l-4 border-sky-500':'bg-white border-l-4 border-amber-400'}`}>
+                                          <div className="flex-1">
+                                              <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 block ${r.type==='bible'?'text-sky-500':'text-amber-600'}`}>{r.type==='bible'?'Bíblica':'Externo'}</span>
+                                              <h3 className="text-lg font-bold text-slate-800">{r.scripture}</h3>
+                                              {r.title && <p className="text-sm text-slate-500">{r.title}</p>}
+                                              
+                                              {r.type === 'external' && r.externalLink && (
+                                                  <a href={r.externalLink} target="_blank" className="mt-2 inline-flex items-center gap-1 text-xs text-sky-600 font-bold hover:underline border px-2 py-1 rounded bg-sky-50 border-sky-100"><LinkIcon size={12}/> Ver Recurso</a>
+                                              )}
+                                              
+                                              {r.observation && (
+                                                  <div className="mt-3 bg-slate-50 p-3 rounded text-sm text-slate-600 italic border-l-2 border-slate-300">
+                                                      <span className="not-italic font-bold text-xs text-slate-400 block mb-1">Observación:</span>
+                                                      {r.observation}
+                                                  </div>
+                                              )}
+                                          </div>
+                                          <button onClick={()=>toggleCompletion(r.id)} className={`p-2 rounded-full ${isRead?'text-emerald-500 bg-emerald-50':'text-slate-300 hover:bg-slate-100'}`}>
+                                              {isRead ? <CheckCircle size={24} fill="currentColor" className="text-emerald-100"/> : <div className="w-6 h-6 rounded-full border-2 border-slate-300"></div>}
+                                          </button>
+                                      </div>
+                                      
+                                      {/* Comentarios Mini */}
+                                      <div className="bg-slate-50/50 border-t px-4 py-2 flex justify-between items-center">
+                                          <button onClick={()=>setActiveReadingIdForComment(showComments?null:r.id)} className="text-xs font-medium text-slate-500 hover:text-sky-600 flex items-center gap-1">
+                                              <MessageSquare size={14}/> {comments.length > 0 ? `${comments.length} comentarios` : 'Comentar'}
+                                          </button>
+                                          {r.externalContent && <span className="text-xs text-slate-400 flex items-center gap-1"><FileText size={12}/> Contenido</span>}
+                                      </div>
+
+                                      {/* Área Expandible */}
+                                      {showComments && (
+                                          <div className="p-4 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top-1">
+                                              {r.externalContent && (
+                                                  <div className="mb-4 p-3 bg-white rounded border text-sm text-slate-700 max-h-40 overflow-y-auto shadow-sm">
+                                                      {r.externalContent}
+                                                  </div>
+                                              )}
+                                              
+                                              <div className="space-y-3 mb-3">
+                                                  {comments.map(c => (
+                                                      <div key={c.id} className="flex gap-2 items-start">
+                                                          <img src={c.userPhoto} className="w-6 h-6 rounded-full mt-1"/>
+                                                          <div className="bg-white p-2 rounded-r-lg rounded-bl-lg border text-sm flex-1">
+                                                              <div className="font-bold text-xs text-slate-700">{c.userName}</div>
+                                                              <p className="text-slate-600">{c.text}</p>
+                                                          </div>
+                                                      </div>
+                                                  ))}
+                                              </div>
+                                              <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2">
+                                                  <input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe..." value={commentText} onChange={e=>setCommentText(e.target.value)}/>
+                                                  <button type="submit" disabled={!commentText.trim()} className="text-sky-500 hover:bg-sky-100 p-2 rounded"><Send size={16}/></button>
+                                              </form>
+                                          </div>
+                                      )}
+                                  </Card>
+                              );
+                          })}
+                      </div>
+                  ))
               )}
           </main>
       </div>
