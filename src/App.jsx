@@ -29,7 +29,8 @@ import {
   BookOpen, CheckCircle, MessageSquare, Users, LogOut, Calendar, Send, Loader2, 
   PlusCircle, BarChart2, Edit3, Save, ChevronDown, Youtube, ScrollText, 
   ArrowRight, ExternalLink, Shield, ShieldAlert, ShieldCheck, Bell, X, 
-  AlertTriangle, FileText, Link as LinkIcon, Clock, CheckSquare, Activity, Book
+  AlertTriangle, FileText, Link as LinkIcon, Clock, CheckSquare, Activity, Book,
+  List, UserCheck, AlertCircle
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE (PRODUCCIÓN) ---
@@ -118,6 +119,10 @@ export default function App() {
 
   // Estado de UI Usuario
   const [userFilter, setUserFilter] = useState('pending'); 
+  
+  // Estado de UI Admin Stats
+  const [statsMode, setStatsMode] = useState('byUser'); // 'byUser' | 'byReading'
+  const [expandedStatItem, setExpandedStatItem] = useState(null);
 
   // Inputs
   const [commentText, setCommentText] = useState('');
@@ -542,7 +547,6 @@ export default function App() {
 
               {activeTab === 'stats' && (
                   <div className="space-y-6">
-                      {/* Resumen */}
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                           <Card className="p-4 text-center bg-sky-50 border-sky-100">
                              <div className="text-2xl font-bold text-sky-600">{allReadings.length}</div>
@@ -558,66 +562,119 @@ export default function App() {
                           </Card>
                       </div>
 
-                      {/* Tabla de Cumplimiento por Estudiante */}
-                      <Card className="overflow-hidden">
-                          <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm flex justify-between items-center">
-                              <span>Progreso por Estudiante</span>
-                              <span className="text-xs font-normal text-slate-500">Ordenado por cumplimiento</span>
-                          </div>
-                          <div className="divide-y max-h-96 overflow-y-auto">
-                              {allUsers
-                                .map(u => {
-                                    const userCompletions = allCompletions.filter(c => c.userId === u.uid).length;
-                                    return { ...u, userCompletions };
-                                })
-                                .sort((a, b) => b.userCompletions - a.userCompletions)
-                                .map(u => (
-                                  <div key={u.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
-                                      <div className="flex items-center gap-3">
-                                          <div className="relative">
-                                              <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
-                                              <div className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5">
-                                                  <div className={`w-2 h-2 rounded-full ${u.userCompletions > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
-                                              </div>
-                                          </div>
-                                          <div>
-                                              <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
-                                              <div className="text-xs text-slate-400">{u.email}</div>
-                                          </div>
-                                      </div>
-                                      <div className="flex items-center gap-2">
-                                          <span className="text-sm font-bold text-slate-700">{u.userCompletions}</span>
-                                          <CheckSquare size={16} className="text-emerald-500"/>
-                                      </div>
-                                  </div>
-                              ))}
-                          </div>
-                      </Card>
+                      <div className="flex justify-center gap-4 mb-4">
+                          <button onClick={() => setStatsMode('byUser')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byUser' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Estudiante</button>
+                          <button onClick={() => setStatsMode('byReading')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byReading' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Lectura</button>
+                      </div>
 
-                      {/* Detalle por Lectura (Ranking) */}
-                      <Card className="overflow-hidden">
-                          <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Lecturas más completadas</div>
-                          <div className="divide-y max-h-80 overflow-y-auto">
-                              {allReadings.map(r => {
-                                  const count = allCompletions.filter(c => c.readingId === r.id).length;
-                                  const percentage = allUsers.length > 0 ? Math.round((count / allUsers.length) * 100) : 0;
-                                  return { ...r, count, percentage };
-                              })
-                              .sort((a, b) => b.count - a.count)
-                              .slice(0, 20) // Top 20
-                              .map(r => (
-                                  <div key={r.id} className="p-3">
-                                      <div className="flex justify-between text-sm mb-1">
-                                          <span className="font-medium text-slate-700 truncate pr-4">{r.scripture}</span>
-                                          <span className="text-slate-500 whitespace-nowrap">{r.count} / {allUsers.length}</span>
-                                      </div>
-                                      <div className="w-full bg-slate-100 rounded-full h-1.5">
-                                          <div className="bg-sky-500 h-1.5 rounded-full" style={{ width: `${r.percentage}%` }}></div>
-                                      </div>
-                                  </div>
-                              ))}
-                          </div>
-                      </Card>
+                      {statsMode === 'byUser' ? (
+                          <Card className="overflow-hidden">
+                              <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm flex justify-between items-center">
+                                  <span>Progreso por Estudiante</span>
+                                  <span className="text-xs font-normal text-slate-500">Clic para ver pendientes</span>
+                              </div>
+                              <div className="divide-y max-h-96 overflow-y-auto">
+                                  {allUsers.map(u => {
+                                      const userReadIds = allCompletions.filter(c => c.userId === u.uid).map(c => c.readingId);
+                                      const pendingReadings = allReadings.filter(r => !userReadIds.includes(r.id));
+                                      const isExpanded = expandedStatItem === u.id;
+                                      
+                                      return (
+                                          <div key={u.id}>
+                                              <div 
+                                                className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
+                                                onClick={() => setExpandedStatItem(isExpanded ? null : u.id)}
+                                              >
+                                                  <div className="flex items-center gap-3">
+                                                      <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
+                                                      <div>
+                                                          <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
+                                                          <div className="text-xs text-slate-400 flex gap-2">
+                                                              <span className="text-emerald-600">{userReadIds.length} completadas</span>
+                                                              <span>•</span>
+                                                              <span className="text-red-400">{pendingReadings.length} pendientes</span>
+                                                          </div>
+                                                      </div>
+                                                  </div>
+                                                  <ChevronDown size={16} className={`text-slate-400 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
+                                              </div>
+                                              {isExpanded && (
+                                                  <div className="bg-red-50 p-3 border-t border-red-100 text-xs">
+                                                      <div className="font-bold text-red-600 mb-2 flex items-center gap-1"><AlertCircle size={12}/> Lecturas Pendientes:</div>
+                                                      {pendingReadings.length > 0 ? (
+                                                          <ul className="space-y-1 pl-4 list-disc text-slate-600">
+                                                              {pendingReadings.map(r => (
+                                                                  <li key={r.id}>
+                                                                      <span className="font-bold">{r.scripture || r.title}</span> 
+                                                                      <span className="text-slate-400 ml-1">({r.date})</span>
+                                                                  </li>
+                                                              ))}
+                                                          </ul>
+                                                      ) : (
+                                                          <p className="text-emerald-600 italic flex items-center gap-1"><CheckCircle size={12}/> ¡Está al día!</p>
+                                                      )}
+                                                  </div>
+                                              )}
+                                          </div>
+                                      );
+                                  })}
+                              </div>
+                          </Card>
+                      ) : (
+                          <Card className="overflow-hidden">
+                              <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Estado por Lectura</div>
+                              <div className="divide-y max-h-96 overflow-y-auto">
+                                  {allReadings.map(r => {
+                                      const readers = allCompletions.filter(c => c.readingId === r.id).map(c => c.userId);
+                                      const missingUsers = allUsers.filter(u => !readers.includes(u.uid));
+                                      const isExpanded = expandedStatItem === r.id;
+                                      
+                                      return (
+                                          <div key={r.id}>
+                                              <div 
+                                                className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
+                                                onClick={() => setExpandedStatItem(isExpanded ? null : r.id)}
+                                              >
+                                                  <div className="flex-1">
+                                                      <div className="text-sm font-bold text-slate-700">{r.scripture || r.title}</div>
+                                                      <div className="text-xs text-slate-400">{r.date}</div>
+                                                  </div>
+                                                  <div className="flex items-center gap-3">
+                                                      <div className="text-right">
+                                                          <div className="text-xs font-bold text-slate-600">{readers.length} / {allUsers.length}</div>
+                                                          <div className="w-20 bg-slate-100 rounded-full h-1.5 mt-1">
+                                                              <div className="bg-sky-500 h-1.5 rounded-full" style={{ width: `${(readers.length/allUsers.length)*100}%` }}></div>
+                                                          </div>
+                                                      </div>
+                                                      <ChevronDown size={16} className={`text-slate-400 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
+                                                  </div>
+                                              </div>
+                                              {isExpanded && (
+                                                  <div className="bg-slate-50 p-3 border-t text-xs flex gap-4">
+                                                      <div className="flex-1">
+                                                          <div className="font-bold text-emerald-600 mb-1">Completado por:</div>
+                                                          <div className="flex flex-wrap gap-1">
+                                                              {allUsers.filter(u => readers.includes(u.uid)).map(u => (
+                                                                  <span key={u.id} className="bg-white border border-emerald-100 px-2 py-0.5 rounded text-emerald-700">{u.displayName}</span>
+                                                              ))}
+                                                          </div>
+                                                      </div>
+                                                      <div className="flex-1 border-l pl-4 border-slate-200">
+                                                          <div className="font-bold text-red-500 mb-1">Pendiente:</div>
+                                                          <div className="flex flex-wrap gap-1">
+                                                              {missingUsers.map(u => (
+                                                                  <span key={u.id} className="bg-white border border-red-100 px-2 py-0.5 rounded text-red-600">{u.displayName}</span>
+                                                              ))}
+                                                          </div>
+                                                      </div>
+                                                  </div>
+                                              )}
+                                          </div>
+                                      );
+                                  })}
+                              </div>
+                          </Card>
+                      )}
                   </div>
               )}
           </main>
@@ -632,6 +689,8 @@ export default function App() {
       <div className="min-h-screen bg-sky-50 pb-20">
           <Header/>
           <main className="max-w-3xl mx-auto p-4 space-y-6">
+              
+              {/* Tabs Pendiente/Completado */}
               <div className="flex p-1 bg-slate-200 rounded-lg">
                   <button onClick={()=>setUserFilter('pending')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${userFilter==='pending'?'bg-white text-sky-600 shadow-sm':'text-slate-500'}`}>Pendientes</button>
                   <button onClick={()=>setUserFilter('completed')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${userFilter==='completed'?'bg-white text-emerald-600 shadow-sm':'text-slate-500'}`}>Completadas</button>
@@ -649,6 +708,7 @@ export default function App() {
                               <Calendar size={14}/> {date === new Date().toISOString().split('T')[0] ? 'Hoy' : new Date(date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
                               <div className="h-px bg-slate-200 flex-1"></div>
                           </div>
+                          
                           {groupedReadings[date].map(r => {
                               const isRead = completionsMap[r.id];
                               const comments = commentsMap[r.id] || [];
@@ -664,6 +724,7 @@ export default function App() {
                                               {r.type === 'external' && r.externalLink && (
                                                   <a href={r.externalLink} target="_blank" className="mt-2 inline-flex items-center gap-1 text-xs text-sky-600 font-bold hover:underline border px-2 py-1 rounded bg-sky-50 border-sky-100"><LinkIcon size={12}/> Ver Recurso</a>
                                               )}
+                                              
                                               {r.observation && (
                                                   <div className="mt-3 bg-slate-50 p-3 rounded text-sm text-slate-600 italic border-l-2 border-slate-300">
                                                       <span className="not-italic font-bold text-xs text-slate-400 block mb-1">Observación:</span>
@@ -675,15 +736,41 @@ export default function App() {
                                               {isRead ? <CheckCircle size={24} fill="currentColor" className="text-emerald-100"/> : <div className="w-6 h-6 rounded-full border-2 border-slate-300"></div>}
                                           </button>
                                       </div>
+                                      
+                                      {/* Comentarios Mini - MODIFICADO A BOTÓN GRANDE */}
                                       <div className="bg-slate-50/50 border-t p-2">
-                                          <button onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)} className={`flex items-center gap-2 px-4 py-2 rounded-lg w-full justify-center text-sm font-medium transition-colors ${showComments ? 'bg-slate-200 text-slate-800' : 'bg-sky-50 text-sky-600 hover:bg-sky-100'}`}>
-                                              <MessageSquare size={18} /> {comments.length > 0 ? `Ver ${comments.length} Comentarios` : 'Escribir un comentario'} <ChevronDown size={16} className={`ml-auto transform transition-transform duration-200 ${showComments ? 'rotate-180' : ''}`} />
+                                          <button 
+                                              onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)}
+                                              className={`flex items-center gap-2 px-4 py-2 rounded-lg w-full justify-center text-sm font-medium transition-colors ${
+                                                  showComments 
+                                                  ? 'bg-slate-200 text-slate-800' 
+                                                  : 'bg-sky-50 text-sky-600 hover:bg-sky-100'
+                                              }`}
+                                          >
+                                              <MessageSquare size={18} />
+                                              {comments.length > 0 ? `Ver ${comments.length} Comentarios` : 'Escribir un comentario'}
+                                              <ChevronDown 
+                                                  size={16} 
+                                                  className={`ml-auto transform transition-transform duration-200 ${showComments ? 'rotate-180' : ''}`} 
+                                              />
                                           </button>
-                                          {r.externalContent && !showComments && <div className="text-center mt-2 text-xs text-slate-400 flex justify-center gap-1"><FileText size={12}/> Incluye contenido de lectura</div>}
+                                          
+                                          {r.externalContent && !showComments && (
+                                             <div className="text-center mt-2 text-xs text-slate-400 flex justify-center gap-1">
+                                                <FileText size={12}/> Incluye contenido de lectura
+                                             </div>
+                                          )}
                                       </div>
+
+                                      {/* Área Expandible */}
                                       {showComments && (
                                           <div className="p-4 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top-1">
-                                              {r.externalContent && <div className="mb-4 p-3 bg-white rounded border text-sm text-slate-700 max-h-40 overflow-y-auto shadow-sm">{r.externalContent}</div>}
+                                              {r.externalContent && (
+                                                  <div className="mb-4 p-3 bg-white rounded border text-sm text-slate-700 max-h-40 overflow-y-auto shadow-sm">
+                                                      {r.externalContent}
+                                                  </div>
+                                              )}
+                                              
                                               <div className="space-y-3 mb-3">
                                                   {comments.map(c => (
                                                       <div key={c.id} className="flex gap-2 items-start">
@@ -694,7 +781,9 @@ export default function App() {
                                                           </div>
                                                       </div>
                                                   ))}
-                                                  {comments.length === 0 && <p className="text-center text-xs text-slate-400 italic py-2">Sé el primero en compartir tu reflexión.</p>}
+                                                  {comments.length === 0 && (
+                                                      <p className="text-center text-xs text-slate-400 italic py-2">Sé el primero en compartir tu reflexión.</p>
+                                                  )}
                                               </div>
                                               <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2">
                                                   <input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe..." value={commentText} onChange={e=>setCommentText(e.target.value)}/>
