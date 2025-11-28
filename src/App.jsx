@@ -29,7 +29,7 @@ import {
   BookOpen, CheckCircle, MessageSquare, Users, LogOut, Calendar, Send, Loader2, 
   PlusCircle, BarChart2, Edit3, Save, ChevronDown, Youtube, ScrollText, 
   ArrowRight, ExternalLink, Shield, ShieldAlert, ShieldCheck, Bell, X, 
-  AlertTriangle, FileText, Link as LinkIcon, Clock, CheckSquare
+  AlertTriangle, FileText, Link as LinkIcon, Clock, CheckSquare, Activity, Book
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE (PRODUCCIÓN) ---
@@ -112,11 +112,12 @@ export default function App() {
   // Datos
   const [allReadings, setAllReadings] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
+  const [allCompletions, setAllCompletions] = useState([]); // Nuevo: Para estadísticas globales
   const [completionsMap, setCompletionsMap] = useState({});
   const [commentsMap, setCommentsMap] = useState({});
 
   // Estado de UI Usuario
-  const [userFilter, setUserFilter] = useState('pending'); // 'pending' | 'completed'
+  const [userFilter, setUserFilter] = useState('pending'); 
 
   // Inputs
   const [commentText, setCommentText] = useState('');
@@ -126,7 +127,7 @@ export default function App() {
     externalLink: '', externalContent: '', observation: '' 
   });
   const [activeReadingIdForComment, setActiveReadingIdForComment] = useState(null);
-  const [editingReading, setEditingReading] = useState(null); // Para que el admin edite
+  const [editingReading, setEditingReading] = useState(null); 
   const [loginName, setLoginName] = useState('');
 
   // 1. Inicializar Auth
@@ -149,7 +150,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Escuchar Perfil de Usuario
+  // 2. Escuchar Perfil
   useEffect(() => {
     if (!user) return;
     if (userData && userData.uid !== user.uid) { setLoading(false); return; }
@@ -172,29 +173,21 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // 3. Login con Google
+  // 3. Logins
   const handleGoogleLogin = async () => {
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
-      const user = result.user;
-      await checkAndCreateProfile(user, user.displayName || "Usuario Google");
+      await checkAndCreateProfile(result.user, result.user.displayName || "Usuario Google");
     } catch (error) {
       console.error("Error Google:", error);
-      let msg = "Error al conectar con Google.";
-      if (error.code === 'auth/unauthorized-domain') {
-         const currentDomain = window.location.hostname;
-         msg = `⚠️ Dominio bloqueado: "${currentDomain}". Agrégalo en Firebase Console.`;
-      } else if (error.code === 'auth/popup-blocked') {
-         msg = "⚠️ Pop-up bloqueado. Permite ventanas emergentes.";
-      }
-      alert(msg);
+      alert("Error al conectar con Google. Verifica permisos.");
       setLoading(false);
     }
   };
 
-  // 4. Crear Perfil
+  // 4. Perfil
   const checkAndCreateProfile = async (user, name, forceAdmin = false) => {
     const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid);
     try {
@@ -233,15 +226,12 @@ export default function App() {
   // --- LÓGICA DE DATOS ---
   const activeUid = userData?.uid;
 
-  // Leer TODAS las Lecturas (Sin filtro de fecha para ver historial)
+  // Leer TODAS las Lecturas
   useEffect(() => {
     if (!userData?.isApproved) return;
-    
     const q = query(collection(db, 'artifacts', APP_ID, 'readings'));
-    
     return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
-        // Ordenar por fecha (descendente: lo más nuevo arriba)
         docs.sort((a,b) => {
             if (a.date > b.date) return -1;
             if (a.date < b.date) return 1;
@@ -254,7 +244,6 @@ export default function App() {
   // Leer Comentarios
   useEffect(() => {
     if (!userData?.isApproved || allReadings.length === 0) return;
-    // Escuchar cambios globales en comentarios para simplificar en lugar de N listeners
     const q = query(collection(db, 'artifacts', APP_ID, 'comments'), orderBy('createdAt', 'desc'));
     return onSnapshot(q, (snapshot) => {
         const newMap = {};
@@ -265,7 +254,6 @@ export default function App() {
         });
         setCommentsMap(newMap);
     }, (e) => {
-        // Fallback sin indice
         if (e.code === 'failed-precondition') {
              const q2 = query(collection(db, 'artifacts', APP_ID, 'comments'));
              onSnapshot(q2, (snap) => {
@@ -284,7 +272,7 @@ export default function App() {
     });
   }, [userData]); 
 
-  // Leer Progreso
+  // Leer Progreso Personal
   useEffect(() => {
     if (!activeUid) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
@@ -298,11 +286,20 @@ export default function App() {
     });
   }, [activeUid]);
 
+  // Admin: Leer Usuarios y TODOS los completados para estadísticas
   useEffect(() => {
     if (userData?.role !== 'admin') return;
-    return onSnapshot(collection(db, 'artifacts', APP_ID, 'users'), s => {
+    
+    const unsubUsers = onSnapshot(collection(db, 'artifacts', APP_ID, 'users'), s => {
         setAllUsers(s.docs.map(d => ({id: d.id, ...d.data()})));
     });
+
+    // Leer todos los completados para el dashboard
+    const unsubStats = onSnapshot(collection(db, 'artifacts', APP_ID, 'completions'), s => {
+        setAllCompletions(s.docs.map(d => d.data()));
+    });
+
+    return () => { unsubUsers(); unsubStats(); };
   }, [userData]);
 
   // --- ACCIONES ---
@@ -377,8 +374,6 @@ export default function App() {
           const isCompleted = completionsMap[r.id];
           return filter === 'completed' ? isCompleted : !isCompleted;
       });
-      
-      // Agrupar por fecha
       const groups = {};
       filtered.forEach(r => {
           if (!groups[r.date]) groups[r.date] = [];
@@ -401,12 +396,7 @@ export default function App() {
         </div>
         <div className="space-y-4">
             <Button onClick={handleGoogleLogin} variant="google" className="w-full py-3 flex gap-2 justify-center items-center">
-                <svg className="w-5 h-5" viewBox="0 0 24 24">
-                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
-                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
-                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
-                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
-                </svg>
+                <svg className="w-5 h-5" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" /><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" /><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" /><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" /></svg>
                 <span className="font-bold">Continuar con Google</span>
             </Button>
             <div className="text-center text-xs text-slate-400">Acceso exclusivo para miembros registrados</div>
@@ -442,6 +432,7 @@ export default function App() {
       </header>
   );
 
+  // --- ADMIN PANEL ---
   if (view === 'admin') return (
       <div className="min-h-screen bg-sky-50 pb-20">
           <Header/>
@@ -449,6 +440,7 @@ export default function App() {
               <div className="flex gap-2 border-b pb-2 overflow-x-auto">
                   <Button variant={activeTab==='reading'?'primary':'ghost'} onClick={()=>setActiveTab('reading')} className="text-sm"><BookOpen size={16} className="mr-2"/> Lecturas</Button>
                   <Button variant={activeTab==='users'?'primary':'ghost'} onClick={()=>setActiveTab('users')} className="text-sm"><Users size={16} className="mr-2"/> Usuarios</Button>
+                  <Button variant={activeTab==='stats'?'primary':'ghost'} onClick={()=>setActiveTab('stats')} className="text-sm"><BarChart2 size={16} className="mr-2"/> Cumplimiento</Button>
               </div>
 
               {activeTab === 'reading' && (
@@ -456,6 +448,7 @@ export default function App() {
                       <Card className="p-6 h-fit">
                           <h2 className="font-bold text-lg mb-4 text-slate-800">Nueva Asignación</h2>
                           <form onSubmit={createReading} className="space-y-4">
+                              {/* Form Create Reading (Same as before) */}
                               <div className="grid grid-cols-2 gap-2">
                                   <input type="date" className="p-2 border rounded text-sm" value={newReading.date} onChange={e=>setNewReading({...newReading, date: e.target.value})}/>
                                   <select className="p-2 border rounded text-sm" value={newReading.type} onChange={e=>setNewReading({...newReading, type: e.target.value})}>
@@ -483,27 +476,31 @@ export default function App() {
                       </Card>
 
                       <div className="space-y-3">
-                          <h3 className="font-bold text-slate-700">Historial Reciente</h3>
-                          {allReadings.slice(0, 10).map(r => (
-                              <div key={r.id} className="bg-white p-3 rounded border flex justify-between items-start">
+                          <h3 className="font-bold text-slate-700">Historial (Clic para editar)</h3>
+                          {allReadings.map(r => (
+                              <div key={r.id} className="bg-white p-3 rounded border flex justify-between items-start hover:shadow-sm transition-shadow">
                                   {editingReading?.id === r.id ? (
                                       <form onSubmit={updateReading} className="w-full space-y-2">
+                                          <div className="font-bold text-sky-600 mb-2">Editando: {r.scripture}</div>
                                           <input className="w-full p-1 border rounded text-sm" value={editingReading.title} onChange={e=>setEditingReading({...editingReading, title:e.target.value})} placeholder="Título"/>
-                                          <textarea className="w-full p-1 border rounded text-sm" value={editingReading.observation} onChange={e=>setEditingReading({...editingReading, observation:e.target.value})} placeholder="Observación"/>
+                                          <input type="date" className="w-full p-1 border rounded text-sm" value={editingReading.date} onChange={e=>setEditingReading({...editingReading, date:e.target.value})}/>
+                                          <textarea className="w-full p-1 border rounded text-sm min-h-[100px]" value={editingReading.observation} onChange={e=>setEditingReading({...editingReading, observation:e.target.value})} placeholder="Comentario Pastoral"/>
                                           <div className="flex gap-2 justify-end">
                                               <button type="button" onClick={()=>setEditingReading(null)} className="text-xs text-slate-500">Cancelar</button>
-                                              <button type="submit" className="text-xs bg-sky-500 text-white px-2 py-1 rounded">Guardar</button>
+                                              <button type="submit" className="text-xs bg-sky-500 text-white px-3 py-1 rounded">Guardar Cambios</button>
                                           </div>
                                       </form>
                                   ) : (
                                       <>
-                                          <div>
-                                              <div className="font-bold text-slate-800 text-sm">{r.scripture} <span className="font-normal text-slate-400 ml-2">{r.date}</span></div>
-                                              {r.observation && <div className="text-xs text-slate-500 italic mt-1">"{r.observation}"</div>}
+                                          <div className="flex-1 cursor-pointer" onClick={()=>setEditingReading(r)}>
+                                              <div className="font-bold text-slate-800 text-sm">{r.scripture} <span className="font-normal text-slate-400 ml-2 text-xs">{r.date}</span></div>
+                                              {r.observation ? 
+                                                 <div className="text-xs text-slate-600 italic mt-1 line-clamp-2 border-l-2 border-amber-300 pl-2">"{r.observation}"</div> 
+                                                 : <div className="text-xs text-slate-300 mt-1 italic">Sin comentario pastoral</div>}
                                           </div>
-                                          <div className="flex gap-2">
-                                              <button onClick={()=>setEditingReading(r)} className="text-sky-500 hover:bg-sky-50 p-1 rounded"><Edit3 size={16}/></button>
-                                              <button onClick={()=>deleteReading(r.id)} className="text-slate-300 hover:text-red-500 p-1 rounded"><X size={16}/></button>
+                                          <div className="flex gap-2 ml-2">
+                                              <button onClick={()=>setEditingReading(r)} className="text-sky-500 hover:bg-sky-50 p-1 rounded" title="Editar"><Edit3 size={16}/></button>
+                                              <button onClick={()=>deleteReading(r.id)} className="text-slate-300 hover:text-red-500 p-1 rounded" title="Borrar"><X size={16}/></button>
                                           </div>
                                       </>
                                   )}
@@ -536,6 +533,87 @@ export default function App() {
                       ))}
                   </div>
               )}
+
+              {activeTab === 'stats' && (
+                  <div className="space-y-6">
+                      {/* Resumen */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <Card className="p-4 text-center bg-sky-50 border-sky-100">
+                             <div className="text-2xl font-bold text-sky-600">{allReadings.length}</div>
+                             <div className="text-xs uppercase text-sky-400 font-bold">Lecturas Totales</div>
+                          </Card>
+                          <Card className="p-4 text-center bg-emerald-50 border-emerald-100">
+                             <div className="text-2xl font-bold text-emerald-600">{allCompletions.length}</div>
+                             <div className="text-xs uppercase text-emerald-400 font-bold">Leídas (Total)</div>
+                          </Card>
+                          <Card className="p-4 text-center">
+                             <div className="text-2xl font-bold text-slate-600">{allUsers.length}</div>
+                             <div className="text-xs uppercase text-slate-400 font-bold">Estudiantes</div>
+                          </Card>
+                      </div>
+
+                      {/* Tabla de Cumplimiento por Estudiante */}
+                      <Card className="overflow-hidden">
+                          <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm flex justify-between items-center">
+                              <span>Progreso por Estudiante</span>
+                              <span className="text-xs font-normal text-slate-500">Ordenado por cumplimiento</span>
+                          </div>
+                          <div className="divide-y max-h-96 overflow-y-auto">
+                              {allUsers
+                                .map(u => {
+                                    const userCompletions = allCompletions.filter(c => c.userId === u.uid).length;
+                                    return { ...u, userCompletions };
+                                })
+                                .sort((a, b) => b.userCompletions - a.userCompletions)
+                                .map(u => (
+                                  <div key={u.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
+                                      <div className="flex items-center gap-3">
+                                          <div className="relative">
+                                              <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
+                                              <div className="absolute -bottom-1 -right-1 bg-white rounded-full p-0.5">
+                                                  <div className={`w-2 h-2 rounded-full ${u.userCompletions > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`}></div>
+                                              </div>
+                                          </div>
+                                          <div>
+                                              <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
+                                              <div className="text-xs text-slate-400">{u.email}</div>
+                                          </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                          <span className="text-sm font-bold text-slate-700">{u.userCompletions}</span>
+                                          <CheckSquare size={16} className="text-emerald-500"/>
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+                      </Card>
+
+                      {/* Detalle por Lectura (Ranking) */}
+                      <Card className="overflow-hidden">
+                          <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Lecturas más completadas</div>
+                          <div className="divide-y max-h-80 overflow-y-auto">
+                              {allReadings.map(r => {
+                                  const count = allCompletions.filter(c => c.readingId === r.id).length;
+                                  const percentage = allUsers.length > 0 ? Math.round((count / allUsers.length) * 100) : 0;
+                                  return { ...r, count, percentage };
+                              })
+                              .sort((a, b) => b.count - a.count)
+                              .slice(0, 20) // Top 20
+                              .map(r => (
+                                  <div key={r.id} className="p-3">
+                                      <div className="flex justify-between text-sm mb-1">
+                                          <span className="font-medium text-slate-700 truncate pr-4">{r.scripture}</span>
+                                          <span className="text-slate-500 whitespace-nowrap">{r.count} / {allUsers.length}</span>
+                                      </div>
+                                      <div className="w-full bg-slate-100 rounded-full h-1.5">
+                                          <div className="bg-sky-500 h-1.5 rounded-full" style={{ width: `${r.percentage}%` }}></div>
+                                      </div>
+                                  </div>
+                              ))}
+                          </div>
+                      </Card>
+                  </div>
+              )}
           </main>
       </div>
   );
@@ -548,8 +626,6 @@ export default function App() {
       <div className="min-h-screen bg-sky-50 pb-20">
           <Header/>
           <main className="max-w-3xl mx-auto p-4 space-y-6">
-              
-              {/* Tabs Pendiente/Completado */}
               <div className="flex p-1 bg-slate-200 rounded-lg">
                   <button onClick={()=>setUserFilter('pending')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${userFilter==='pending'?'bg-white text-sky-600 shadow-sm':'text-slate-500'}`}>Pendientes</button>
                   <button onClick={()=>setUserFilter('completed')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${userFilter==='completed'?'bg-white text-emerald-600 shadow-sm':'text-slate-500'}`}>Completadas</button>
@@ -567,7 +643,6 @@ export default function App() {
                               <Calendar size={14}/> {date === new Date().toISOString().split('T')[0] ? 'Hoy' : new Date(date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
                               <div className="h-px bg-slate-200 flex-1"></div>
                           </div>
-                          
                           {groupedReadings[date].map(r => {
                               const isRead = completionsMap[r.id];
                               const comments = commentsMap[r.id] || [];
@@ -583,7 +658,6 @@ export default function App() {
                                               {r.type === 'external' && r.externalLink && (
                                                   <a href={r.externalLink} target="_blank" className="mt-2 inline-flex items-center gap-1 text-xs text-sky-600 font-bold hover:underline border px-2 py-1 rounded bg-sky-50 border-sky-100"><LinkIcon size={12}/> Ver Recurso</a>
                                               )}
-                                              
                                               {r.observation && (
                                                   <div className="mt-3 bg-slate-50 p-3 rounded text-sm text-slate-600 italic border-l-2 border-slate-300">
                                                       <span className="not-italic font-bold text-xs text-slate-400 block mb-1">Observación:</span>
@@ -595,41 +669,15 @@ export default function App() {
                                               {isRead ? <CheckCircle size={24} fill="currentColor" className="text-emerald-100"/> : <div className="w-6 h-6 rounded-full border-2 border-slate-300"></div>}
                                           </button>
                                       </div>
-                                      
-                                      {/* Comentarios Mini - MODIFICADO A BOTÓN GRANDE */}
                                       <div className="bg-slate-50/50 border-t p-2">
-                                          <button 
-                                              onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)}
-                                              className={`flex items-center gap-2 px-4 py-2 rounded-lg w-full justify-center text-sm font-medium transition-colors ${
-                                                  showComments 
-                                                  ? 'bg-slate-200 text-slate-800' 
-                                                  : 'bg-sky-50 text-sky-600 hover:bg-sky-100'
-                                              }`}
-                                          >
-                                              <MessageSquare size={18} />
-                                              {comments.length > 0 ? `Ver ${comments.length} Comentarios` : 'Escribir un comentario'}
-                                              <ChevronDown 
-                                                  size={16} 
-                                                  className={`ml-auto transform transition-transform duration-200 ${showComments ? 'rotate-180' : ''}`} 
-                                              />
+                                          <button onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)} className={`flex items-center gap-2 px-4 py-2 rounded-lg w-full justify-center text-sm font-medium transition-colors ${showComments ? 'bg-slate-200 text-slate-800' : 'bg-sky-50 text-sky-600 hover:bg-sky-100'}`}>
+                                              <MessageSquare size={18} /> {comments.length > 0 ? `Ver ${comments.length} Comentarios` : 'Escribir un comentario'} <ChevronDown size={16} className={`ml-auto transform transition-transform duration-200 ${showComments ? 'rotate-180' : ''}`} />
                                           </button>
-                                          
-                                          {r.externalContent && !showComments && (
-                                             <div className="text-center mt-2 text-xs text-slate-400 flex justify-center gap-1">
-                                                <FileText size={12}/> Incluye contenido de lectura
-                                             </div>
-                                          )}
+                                          {r.externalContent && !showComments && <div className="text-center mt-2 text-xs text-slate-400 flex justify-center gap-1"><FileText size={12}/> Incluye contenido de lectura</div>}
                                       </div>
-
-                                      {/* Área Expandible */}
                                       {showComments && (
                                           <div className="p-4 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top-1">
-                                              {r.externalContent && (
-                                                  <div className="mb-4 p-3 bg-white rounded border text-sm text-slate-700 max-h-40 overflow-y-auto shadow-sm">
-                                                      {r.externalContent}
-                                                  </div>
-                                              )}
-                                              
+                                              {r.externalContent && <div className="mb-4 p-3 bg-white rounded border text-sm text-slate-700 max-h-40 overflow-y-auto shadow-sm">{r.externalContent}</div>}
                                               <div className="space-y-3 mb-3">
                                                   {comments.map(c => (
                                                       <div key={c.id} className="flex gap-2 items-start">
@@ -640,9 +688,7 @@ export default function App() {
                                                           </div>
                                                       </div>
                                                   ))}
-                                                  {comments.length === 0 && (
-                                                      <p className="text-center text-xs text-slate-400 italic py-2">Sé el primero en compartir tu reflexión.</p>
-                                                  )}
+                                                  {comments.length === 0 && <p className="text-center text-xs text-slate-400 italic py-2">Sé el primero en compartir tu reflexión.</p>}
                                               </div>
                                               <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2">
                                                   <input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe..." value={commentText} onChange={e=>setCommentText(e.target.value)}/>
