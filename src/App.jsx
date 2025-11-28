@@ -150,7 +150,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Escuchar Perfil
+  // 2. Escuchar Perfil de Usuario
   useEffect(() => {
     if (!user) return;
     if (userData && userData.uid !== user.uid) { setLoading(false); return; }
@@ -173,21 +173,29 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // 3. Logins
+  // 3. Login con Google
   const handleGoogleLogin = async () => {
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
-      await checkAndCreateProfile(result.user, result.user.displayName || "Usuario Google");
+      const user = result.user;
+      await checkAndCreateProfile(user, user.displayName || "Usuario Google");
     } catch (error) {
       console.error("Error Google:", error);
-      alert("Error al conectar con Google. Verifica permisos.");
+      let msg = "Error al conectar con Google.";
+      if (error.code === 'auth/unauthorized-domain') {
+         const currentDomain = window.location.hostname;
+         msg = `⚠️ Dominio bloqueado: "${currentDomain}". Agrégalo en Firebase Console.`;
+      } else if (error.code === 'auth/popup-blocked') {
+         msg = "⚠️ Pop-up bloqueado. Permite ventanas emergentes.";
+      }
+      alert(msg);
       setLoading(false);
     }
   };
 
-  // 4. Perfil
+  // 4. Crear Perfil
   const checkAndCreateProfile = async (user, name, forceAdmin = false) => {
     const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid);
     try {
@@ -432,7 +440,6 @@ export default function App() {
       </header>
   );
 
-  // --- ADMIN PANEL ---
   if (view === 'admin') return (
       <div className="min-h-screen bg-sky-50 pb-20">
           <Header/>
@@ -448,7 +455,6 @@ export default function App() {
                       <Card className="p-6 h-fit">
                           <h2 className="font-bold text-lg mb-4 text-slate-800">Nueva Asignación</h2>
                           <form onSubmit={createReading} className="space-y-4">
-                              {/* Form Create Reading (Same as before) */}
                               <div className="grid grid-cols-2 gap-2">
                                   <input type="date" className="p-2 border rounded text-sm" value={newReading.date} onChange={e=>setNewReading({...newReading, date: e.target.value})}/>
                                   <select className="p-2 border rounded text-sm" value={newReading.type} onChange={e=>setNewReading({...newReading, type: e.target.value})}>
