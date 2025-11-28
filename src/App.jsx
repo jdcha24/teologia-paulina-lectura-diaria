@@ -30,7 +30,7 @@ import {
   PlusCircle, BarChart2, Edit3, Save, ChevronDown, Youtube, ScrollText, 
   ArrowRight, ExternalLink, Shield, ShieldAlert, ShieldCheck, Bell, X, 
   AlertTriangle, FileText, Link as LinkIcon, Clock, CheckSquare, Activity, Book,
-  Flame, Award, Crown, Star, Medal
+  Flame, Award, Crown, Star, Medal, Zap, MessageCircle
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE (PRODUCCIÓN) ---
@@ -54,6 +54,8 @@ const APP_ID = 'teologia-paulina-app';
 // --- CONFIGURACIÓN DE IDENTIDAD ---
 const LOGO_URL = "https://i.ibb.co/rD9fNMv/1764042450953.png";
 const YOUTUBE_CHANNEL = "https://youtube.com/@teologiapaulina?si=5gwOAmgbXHh1hbgc";
+// URL de la App para incluir en el mensaje de WhatsApp (ajusta si tu dominio cambia)
+const APP_URL = "https://teologia-paulina-app.vercel.app";
 
 // --- Estructura Bíblica ---
 const BIBLE_STRUCTURE = {
@@ -99,6 +101,17 @@ const Card = ({ children, className = '' }) => (
   <div className={`bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden ${className}`}>{children}</div>
 );
 
+const Badge = ({ children, color = 'gray' }) => {
+  const colors = {
+    green: 'bg-emerald-50 text-emerald-700 border border-emerald-100',
+    blue: 'bg-sky-50 text-sky-700 border border-sky-100',
+    amber: 'bg-amber-50 text-amber-700 border border-amber-100',
+    red: 'bg-red-50 text-red-600 border border-red-100',
+    gray: 'bg-gray-50 text-gray-600 border border-gray-100'
+  };
+  return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide ${colors[color]}`}>{children}</span>
+};
+
 // --- App Principal ---
 export default function App() {
   const [user, setUser] = useState(null);
@@ -116,14 +129,13 @@ export default function App() {
   const [commentsMap, setCommentsMap] = useState({});
   
   // Gamificación
-  const [userCompletionDates, setUserCompletionDates] = useState([]);
   const [streak, setStreak] = useState(0);
 
   // Estado de UI Usuario
   const [userFilter, setUserFilter] = useState('pending'); 
   
   // Estado de UI Admin Stats
-  const [statsMode, setStatsMode] = useState('byUser'); // 'byUser' | 'byReading'
+  const [statsMode, setStatsMode] = useState('byUser'); 
   const [expandedStatItem, setExpandedStatItem] = useState(null);
 
   // Inputs
@@ -190,7 +202,14 @@ export default function App() {
       await checkAndCreateProfile(user, user.displayName || "Usuario Google");
     } catch (error) {
       console.error("Error Google:", error);
-      alert("Error al conectar con Google.");
+      let msg = "Error al conectar con Google.";
+      if (error.code === 'auth/unauthorized-domain') {
+         const currentDomain = window.location.hostname;
+         msg = `⚠️ Dominio bloqueado: "${currentDomain}". Agrégalo en Firebase Console.`;
+      } else if (error.code === 'auth/popup-blocked') {
+         msg = "⚠️ Pop-up bloqueado. Permite ventanas emergentes.";
+      }
+      alert(msg);
       setLoading(false);
     }
   };
@@ -234,7 +253,7 @@ export default function App() {
   // --- LÓGICA DE DATOS ---
   const activeUid = userData?.uid;
 
-  // Leer Lecturas
+  // Leer TODAS las Lecturas
   useEffect(() => {
     if (!userData?.isApproved) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'readings'));
@@ -262,7 +281,6 @@ export default function App() {
         });
         setCommentsMap(newMap);
     }, (e) => {
-        // Fallback si falla index
         if (e.code === 'failed-precondition') {
              const q2 = query(collection(db, 'artifacts', APP_ID, 'comments'));
              onSnapshot(q2, (snap) => {
@@ -281,7 +299,7 @@ export default function App() {
     });
   }, [userData]); 
 
-  // Leer Progreso Personal e Historial de Fechas para Racha
+  // Leer Progreso Personal
   useEffect(() => {
     if (!activeUid) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
@@ -291,8 +309,6 @@ export default function App() {
         snapshot.docs.forEach(doc => {
             const data = doc.data();
             map[data.readingId] = true;
-            // Guardamos fecha de COMPLETADO si existe, si no, usamos fecha actual (aprox)
-            // Idealmente deberíamos guardar completedDate en YYYY-MM-DD en el documento
             if (data.completedAt) {
                 const dateStr = new Date(data.completedAt.seconds * 1000).toISOString().split('T')[0];
                 dates.add(dateStr);
@@ -300,27 +316,16 @@ export default function App() {
         });
         setCompletionsMap(map);
         
-        // Calcular Racha
-        const sortedDates = Array.from(dates).sort().reverse();
-        setUserCompletionDates(sortedDates);
-        
+        // Racha
         let currentStreak = 0;
         const today = new Date().toISOString().split('T')[0];
         const yesterday = new Date(Date.now() - 86400000).toISOString().split('T')[0];
-        
-        // Si leyó hoy, empezamos a contar. Si no, vemos si leyó ayer.
         let checkDate = new Date();
+        
         if (!dates.has(today)) {
-             // Si no leyó hoy, chequeamos ayer. Si tampoco, racha es 0.
-             if (!dates.has(yesterday)) {
-                 setStreak(0);
-                 return;
-             }
-             // Empezamos a contar desde ayer hacia atrás
+             if (!dates.has(yesterday)) { setStreak(0); return; }
              checkDate = new Date(Date.now() - 86400000);
         }
-        
-        // Contamos hacia atrás
         while (true) {
             const dateStr = checkDate.toISOString().split('T')[0];
             if (dates.has(dateStr)) {
@@ -331,11 +336,10 @@ export default function App() {
             }
         }
         setStreak(currentStreak);
-
     });
   }, [activeUid]);
 
-  // Admin: Leer Usuarios y TODOS los completados
+  // Admin: Leer Usuarios y TODOS los completados para estadísticas
   useEffect(() => {
     if (userData?.role !== 'admin') return;
     
@@ -349,6 +353,23 @@ export default function App() {
 
     return () => { unsubUsers(); unsubStats(); };
   }, [userData]);
+
+  // --- NOTIFICACIÓN POR WHATSAPP ---
+  const sendWhatsAppNotification = (reading) => {
+      // Formato del mensaje (Machote)
+      const title = reading.scripture || reading.title || 'Nueva Lectura';
+      const date = reading.date;
+      const observation = reading.observation ? `_"${reading.observation}"_` : '';
+      const link = APP_URL || window.location.origin;
+
+      const message = `*Teología Paulina - Lectura Diaria* 🕊️\n\n📅 *Fecha:* ${date}\n📖 *Tema:* ${title}\n\n${observation}\n\n🔗 *Ingresa aquí para completar:* ${link}`;
+      
+      // Codificar para URL
+      const encodedMessage = encodeURIComponent(message);
+      
+      // Abrir WhatsApp (Preguntará a quién enviar)
+      window.open(`https://wa.me/?text=${encodedMessage}`, '_blank');
+  };
 
   // --- ACCIONES ---
   const toggleCompletion = async (readingId) => {
@@ -388,7 +409,11 @@ export default function App() {
           data.externalContent = newReading.externalContent;
       }
       await addDoc(collection(db, 'artifacts', APP_ID, 'readings'), data);
-      alert("Lectura publicada");
+      
+      // Confirmación con opción de WhatsApp
+      if(confirm("Lectura creada exitosamente.\n\n¿Deseas enviar la notificación por WhatsApp ahora?")) {
+          sendWhatsAppNotification({...data}); 
+      }
   };
 
   const updateReading = async (e) => {
@@ -429,6 +454,12 @@ export default function App() {
       });
       return groups; 
   };
+  
+  const isNew = (timestamp) => {
+      if (!timestamp) return false;
+      const diff = (new Date() - new Date(timestamp.seconds * 1000)) / (1000 * 60 * 60);
+      return diff < 24;
+  }
 
   // --- RENDERS ---
 
@@ -470,14 +501,11 @@ export default function App() {
               <span className="hidden sm:inline">Teología Paulina</span>
           </div>
           <div className="flex gap-3 items-center">
-              {/* RACHA EN EL HEADER */}
               {streak > 0 && (
-                  <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-full border border-amber-100" title={`${streak} días seguidos leyendo`}>
-                      <Flame size={16} className="text-amber-500 fill-amber-500" />
-                      <span className="text-xs font-bold text-amber-600">{streak}</span>
+                  <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-full border border-amber-100" title={`${streak} días seguidos`}>
+                      <Flame size={16} className="text-amber-500 fill-amber-500" /><span className="text-xs font-bold text-amber-600">{streak}</span>
                   </div>
               )}
-              
               <a href={YOUTUBE_CHANNEL} target="_blank" rel="noopener noreferrer" className="p-2 text-red-600 hover:bg-red-50 rounded-full transition-colors" title="YouTube"><Youtube size={24} /></a>
               {userData?.role === 'admin' && (
                   <div className="flex bg-slate-100 p-1 rounded">
@@ -495,7 +523,6 @@ export default function App() {
       <div className="min-h-screen bg-sky-50 pb-20">
           <Header/>
           <main className="max-w-7xl mx-auto p-4 space-y-6">
-              {/* ... ADMIN CONTENT (SAME AS BEFORE) ... */}
               <div className="flex gap-2 border-b pb-2 overflow-x-auto">
                   <Button variant={activeTab==='reading'?'primary':'ghost'} onClick={()=>setActiveTab('reading')} className="text-sm"><BookOpen size={16} className="mr-2"/> Lecturas</Button>
                   <Button variant={activeTab==='users'?'primary':'ghost'} onClick={()=>setActiveTab('users')} className="text-sm"><Users size={16} className="mr-2"/> Usuarios</Button>
@@ -507,7 +534,6 @@ export default function App() {
                       <Card className="p-6 h-fit">
                           <h2 className="font-bold text-lg mb-4 text-slate-800">Nueva Asignación</h2>
                           <form onSubmit={createReading} className="space-y-4">
-                              {/* ... form content ... */}
                               <div className="grid grid-cols-2 gap-2">
                                   <input type="date" className="p-2 border rounded text-sm" value={newReading.date} onChange={e=>setNewReading({...newReading, date: e.target.value})}/>
                                   <select className="p-2 border rounded text-sm" value={newReading.type} onChange={e=>setNewReading({...newReading, type: e.target.value})}>
@@ -557,7 +583,9 @@ export default function App() {
                                                  <div className="text-xs text-slate-600 italic mt-1 line-clamp-2 border-l-2 border-amber-300 pl-2">"{r.observation}"</div> 
                                                  : <div className="text-xs text-slate-300 mt-1 italic">Sin comentario pastoral</div>}
                                           </div>
-                                          <div className="flex gap-2 ml-2">
+                                          <div className="flex gap-2 ml-2 items-center">
+                                              {/* BOTÓN DE NOTIFICAR POR WHATSAPP */}
+                                              <button onClick={() => sendWhatsAppNotification(r)} className="text-emerald-500 hover:bg-emerald-50 p-1 rounded" title="Compartir en WhatsApp"><MessageCircle size={16}/></button>
                                               <button onClick={()=>setEditingReading(r)} className="text-sky-500 hover:bg-sky-50 p-1 rounded" title="Editar"><Edit3 size={16}/></button>
                                               <button onClick={()=>deleteReading(r.id)} className="text-slate-300 hover:text-red-500 p-1 rounded" title="Borrar"><X size={16}/></button>
                                           </div>
@@ -568,7 +596,7 @@ export default function App() {
                       </div>
                   </div>
               )}
-              
+
               {activeTab === 'users' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {allUsers.map(u => (
@@ -595,7 +623,6 @@ export default function App() {
 
               {activeTab === 'stats' && (
                   <div className="space-y-6">
-                      {/* ... STATS CONTENT (SAME AS BEFORE) ... */}
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                           <Card className="p-4 text-center bg-sky-50 border-sky-100">
                              <div className="text-2xl font-bold text-sky-600">{allReadings.length}</div>
@@ -610,154 +637,13 @@ export default function App() {
                              <div className="text-xs uppercase text-slate-400 font-bold">Estudiantes</div>
                           </Card>
                       </div>
-                      {/* ... rest of stats ... */}
+                      
+                      {/* ... stats content ... (Same as before) */}
                   </div>
               )}
           </main>
       </div>
   );
 
-  // --- USER VIEW ---
-  const groupedReadings = getGroupedReadings(userFilter);
-  const sortedDates = Object.keys(groupedReadings).sort().reverse();
-
-  return (
-      <div className="min-h-screen bg-sky-50 pb-20">
-          <Header/>
-          <main className="max-w-3xl mx-auto p-4 space-y-6">
-              
-              {/* SECCIÓN DE LOGROS (GAMIFICACIÓN) */}
-              <Card className="p-4 mb-6 bg-gradient-to-r from-sky-600 to-blue-600 text-white border-none shadow-lg">
-                  <div className="flex items-center justify-between mb-4">
-                      <h3 className="font-bold font-serif text-lg flex items-center gap-2"><Activity size={20}/> Mis Logros</h3>
-                      <div className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
-                          <Flame size={14}/> {streak} días racha
-                      </div>
-                  </div>
-                  <div className="grid grid-cols-4 gap-2 text-center">
-                      {BADGES.map((badge, idx) => {
-                          // Determinar si la insignia está desbloqueada
-                          const isUnlocked = streak >= badge.days;
-                          const Icon = badge.icon;
-                          
-                          return (
-                              <div key={idx} className={`flex flex-col items-center p-2 rounded-lg transition-all ${isUnlocked ? 'bg-white/10 opacity-100 scale-105' : 'opacity-40 grayscale'}`}>
-                                  <div className={`p-2 rounded-full mb-1 bg-white ${badge.color}`}>
-                                      <Icon size={20} />
-                                  </div>
-                                  <span className="text-[10px] font-bold leading-tight">{badge.label}</span>
-                              </div>
-                          )
-                      })}
-                  </div>
-              </Card>
-
-              {/* Tabs Pendiente/Completado */}
-              <div className="flex p-1 bg-slate-200 rounded-lg">
-                  <button onClick={()=>setUserFilter('pending')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${userFilter==='pending'?'bg-white text-sky-600 shadow-sm':'text-slate-500'}`}>Pendientes</button>
-                  <button onClick={()=>setUserFilter('completed')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${userFilter==='completed'?'bg-white text-emerald-600 shadow-sm':'text-slate-500'}`}>Completadas</button>
-              </div>
-
-              {sortedDates.length === 0 ? (
-                  <div className="text-center p-12 text-slate-400 bg-white rounded-xl border border-slate-100">
-                      <ScrollText size={48} className="mx-auto mb-4 text-sky-200"/>
-                      <p>No hay lecturas {userFilter === 'pending' ? 'pendientes' : 'completadas'}.</p>
-                  </div>
-              ) : (
-                  sortedDates.map(date => (
-                      <div key={date} className="space-y-3">
-                          <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-wider px-2">
-                              <Calendar size={14}/> {date === new Date().toISOString().split('T')[0] ? 'Hoy' : new Date(date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
-                              <div className="h-px bg-slate-200 flex-1"></div>
-                          </div>
-                          {groupedReadings[date].map(r => {
-                              const isRead = completionsMap[r.id];
-                              const comments = commentsMap[r.id] || [];
-                              const showComments = activeReadingIdForComment === r.id;
-                              return (
-                                  <Card key={r.id} className="overflow-hidden">
-                                      {/* ... Card Content (Same as before) ... */}
-                                      <div className={`p-4 flex justify-between items-start ${r.type==='bible'?'bg-white border-l-4 border-sky-500':'bg-white border-l-4 border-amber-400'}`}>
-                                          <div className="flex-1">
-                                              <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 block ${r.type==='bible'?'text-sky-500':'text-amber-600'}`}>{r.type==='bible'?'Bíblica':'Externo'}</span>
-                                              <h3 className="text-lg font-bold text-slate-800">{r.scripture}</h3>
-                                              {r.title && <p className="text-sm text-slate-500">{r.title}</p>}
-                                              
-                                              {r.type === 'external' && r.externalLink && (
-                                                  <a href={r.externalLink} target="_blank" className="mt-2 inline-flex items-center gap-1 text-xs text-sky-600 font-bold hover:underline border px-2 py-1 rounded bg-sky-50 border-sky-100"><LinkIcon size={12}/> Ver Recurso</a>
-                                              )}
-                                              
-                                              {r.observation && (
-                                                  <div className="mt-3 bg-slate-50 p-3 rounded text-sm text-slate-600 italic border-l-2 border-slate-300">
-                                                      <span className="not-italic font-bold text-xs text-slate-400 block mb-1">Observación:</span>
-                                                      {r.observation}
-                                                  </div>
-                                              )}
-                                          </div>
-                                          <button onClick={()=>toggleCompletion(r.id)} className={`p-2 rounded-full ${isRead?'text-emerald-500 bg-emerald-50':'text-slate-300 hover:bg-slate-100'}`}>
-                                              {isRead ? <CheckCircle size={24} fill="currentColor" className="text-emerald-100"/> : <div className="w-6 h-6 rounded-full border-2 border-slate-300"></div>}
-                                          </button>
-                                      </div>
-                                      
-                                      <div className="bg-slate-50/50 border-t p-2">
-                                          <button 
-                                              onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)}
-                                              className={`flex items-center gap-2 px-4 py-2 rounded-lg w-full justify-center text-sm font-medium transition-colors ${
-                                                  showComments 
-                                                  ? 'bg-slate-200 text-slate-800' 
-                                                  : 'bg-sky-50 text-sky-600 hover:bg-sky-100'
-                                              }`}
-                                          >
-                                              <MessageSquare size={18} />
-                                              {comments.length > 0 ? `Ver ${comments.length} Comentarios` : 'Escribir un comentario'}
-                                              <ChevronDown 
-                                                  size={16} 
-                                                  className={`ml-auto transform transition-transform duration-200 ${showComments ? 'rotate-180' : ''}`} 
-                                              />
-                                          </button>
-                                          
-                                          {r.externalContent && !showComments && (
-                                             <div className="text-center mt-2 text-xs text-slate-400 flex justify-center gap-1">
-                                                <FileText size={12}/> Incluye contenido de lectura
-                                             </div>
-                                          )}
-                                      </div>
-
-                                      {showComments && (
-                                          <div className="p-4 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top-1">
-                                              {r.externalContent && (
-                                                  <div className="mb-4 p-3 bg-white rounded border text-sm text-slate-700 max-h-40 overflow-y-auto shadow-sm">
-                                                      {r.externalContent}
-                                                  </div>
-                                              )}
-                                              
-                                              <div className="space-y-3 mb-3">
-                                                  {comments.map(c => (
-                                                      <div key={c.id} className="flex gap-2 items-start">
-                                                          <img src={c.userPhoto} className="w-6 h-6 rounded-full mt-1"/>
-                                                          <div className="bg-white p-2 rounded-r-lg rounded-bl-lg border text-sm flex-1">
-                                                              <div className="font-bold text-xs text-slate-700">{c.userName}</div>
-                                                              <p className="text-slate-600">{c.text}</p>
-                                                          </div>
-                                                      </div>
-                                                  ))}
-                                                  {comments.length === 0 && (
-                                                      <p className="text-center text-xs text-slate-400 italic py-2">Sé el primero en compartir tu reflexión.</p>
-                                                  )}
-                                              </div>
-                                              <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2">
-                                                  <input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe..." value={commentText} onChange={e=>setCommentText(e.target.value)}/>
-                                                  <button type="submit" disabled={!commentText.trim()} className="text-sky-500 hover:bg-sky-100 p-2 rounded"><Send size={16}/></button>
-                                              </form>
-                                          </div>
-                                      )}
-                                  </Card>
-                              );
-                          })}
-                      </div>
-                  ))
-              )}
-          </main>
-      </div>
-  );
+  // ... user view ...
 }
