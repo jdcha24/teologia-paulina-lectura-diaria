@@ -3,7 +3,6 @@ import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInWithPopup, 
-  signInAnonymously, 
   onAuthStateChanged, 
   signOut, 
   updateProfile,
@@ -116,7 +115,6 @@ export default function App() {
   const [commentsMap, setCommentsMap] = useState({});
 
   // Inputs
-  const [loginName, setLoginName] = useState('');
   const [commentText, setCommentText] = useState('');
   const [newReading, setNewReading] = useState({ 
     type: 'bible', date: new Date().toISOString().split('T')[0],
@@ -127,6 +125,13 @@ export default function App() {
 
   // 1. Inicializar Auth
   useEffect(() => {
+    if (!document.querySelector('#tailwind-cdn')) {
+        const script = document.createElement('script');
+        script.id = 'tailwind-cdn';
+        script.src = "https://cdn.tailwindcss.com";
+        document.head.appendChild(script);
+    }
+
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (!currentUser) {
@@ -187,57 +192,7 @@ export default function App() {
     }
   };
 
-  // 4. Login Manual
-  const handleManualLogin = async (e, forcedName = null) => {
-    if (e) e.preventDefault();
-    const nameToUse = forcedName || loginName;
-    
-    if (!nameToUse || nameToUse.trim() === "") return;
-    setLoading(true);
-    
-    try {
-      let currentUser = auth.currentUser;
-      if (!currentUser) {
-          const result = await signInAnonymously(auth);
-          currentUser = result.user;
-      }
-      
-      await updateProfile(currentUser, { displayName: nameToUse });
-      
-      let existingData = null;
-      try {
-          const usersRef = collection(db, 'artifacts', APP_ID, 'users');
-          const q = query(usersRef, where('displayName', '==', nameToUse));
-          const querySnapshot = await getDocs(q);
-          if (!querySnapshot.empty) {
-              existingData = querySnapshot.docs[0].data();
-          }
-      } catch(e) { console.log("Modo restringido"); }
-
-      if (existingData) {
-          setUserData(existingData);
-          if (!existingData.isApproved) setView('pending');
-          else setView(existingData.role === 'admin' ? 'admin' : 'dashboard');
-      } else {
-          let isFirstUser = false;
-          try {
-              const snapshot = await getDocs(collection(db, 'artifacts', APP_ID, 'users'));
-              isFirstUser = snapshot.empty;
-          } catch (e) { isFirstUser = false; }
-
-          const isSuperUser = nameToUse.toLowerCase() === 'admin' || nameToUse.toLowerCase() === 'pastor';
-
-          await checkAndCreateProfile(currentUser, nameToUse, isFirstUser || isSuperUser);
-      }
-    } catch (error) {
-        console.error("Error login:", error);
-        alert("Error de conexión. Intenta recargar.");
-    } finally {
-        setLoading(false);
-    }
-  };
-
-  // 5. Crear Perfil
+  // 4. Crear Perfil
   const checkAndCreateProfile = async (user, name, forceAdmin = false) => {
     const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid);
     try {
@@ -254,7 +209,7 @@ export default function App() {
             const newProfile = {
                 uid: user.uid,
                 displayName: name,
-                email: user.email || 'invitado@teologia.com',
+                email: user.email || user.uid + '@teologia.com',
                 photoURL: user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${name}&backgroundColor=0ea5e9&textColor=ffffff`,
                 role: isFirst ? 'admin' : 'user',
                 isApproved: isFirst ? true : false,
@@ -383,14 +338,20 @@ export default function App() {
           <p className="text-sky-600 font-bold uppercase text-xs mt-2">Comunidad de Lectura</p>
         </div>
         <div className="space-y-4">
-            <Button onClick={handleGoogleLogin} variant="google" className="w-full py-3 flex gap-2 justify-center">
+            <Button onClick={handleGoogleLogin} variant="google" className="w-full py-3 flex gap-2 justify-center items-center">
+                {/* Icono Google SVG */}
+                <svg className="w-5 h-5" viewBox="0 0 24 24">
+                    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+                    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+                    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+                    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+                </svg>
                 <span className="font-bold">Continuar con Google</span>
             </Button>
-            <div className="relative py-2"><div className="border-t"></div><span className="absolute top-0 left-1/2 -translate-x-1/2 bg-white px-2 text-xs text-slate-400">O invitado</span></div>
-            <form onSubmit={handleManualLogin} className="space-y-3">
-                <input required className="w-full p-3 border rounded-lg text-sm" placeholder="Tu Nombre (Ej. Juan)" value={loginName} onChange={e=>setLoginName(e.target.value)} />
-                <Button type="submit" variant="primary" className="w-full">Entrar / Recuperar</Button>
-            </form>
+            
+            <div className="text-center text-xs text-slate-400">
+                Acceso exclusivo para miembros registrados
+            </div>
         </div>
       </Card>
     </div>
