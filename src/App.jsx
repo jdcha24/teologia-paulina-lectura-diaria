@@ -125,7 +125,7 @@ export default function App() {
   });
   const [activeReadingIdForComment, setActiveReadingIdForComment] = useState(null);
 
-  // 1. Inicializar Auth (LIMPIO: SIN INYECCIÓN DE ESTILOS)
+  // 1. Inicializar Auth
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
@@ -142,7 +142,6 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     
-    // Si ya tenemos userData y es el mismo UID (recuperación), no cargar de nuevo
     if (userData && userData.uid !== user.uid) {
         setLoading(false);
         return;
@@ -160,7 +159,7 @@ export default function App() {
         }
         setLoading(false);
     }, (error) => {
-        console.log("Esperando perfil o sin permisos...", error);
+        console.log("Esperando perfil...", error);
         setLoading(false);
     });
     return () => unsubscribe();
@@ -179,18 +178,16 @@ export default function App() {
       let msg = "Error al conectar con Google.";
       if (error.code === 'auth/unauthorized-domain') {
          const currentDomain = window.location.hostname;
-         msg = `⚠️ Dominio bloqueado: "${currentDomain}". Agrégalo en Firebase Console > Authentication > Settings > Authorized domains.`;
+         msg = `⚠️ Dominio bloqueado: "${currentDomain}". Agrégalo en Firebase Console.`;
       } else if (error.code === 'auth/popup-blocked') {
-         msg = "⚠️ El navegador bloqueó la ventana de Google. Por favor, permite los pop-ups en la barra de direcciones.";
-      } else if (error.code === 'auth/popup-closed-by-user') {
-         msg = "Operación cancelada.";
+         msg = "⚠️ Pop-up bloqueado. Permite ventanas emergentes.";
       }
       alert(msg);
       setLoading(false);
     }
   };
 
-  // 4. Login Manual (Invitado Inteligente)
+  // 4. Login Manual
   const handleManualLogin = async (e, forcedName = null) => {
     if (e) e.preventDefault();
     const nameToUse = forcedName || loginName;
@@ -207,7 +204,6 @@ export default function App() {
       
       await updateProfile(currentUser, { displayName: nameToUse });
       
-      // Recuperar perfil existente
       let existingData = null;
       try {
           const usersRef = collection(db, 'artifacts', APP_ID, 'users');
@@ -216,23 +212,19 @@ export default function App() {
           if (!querySnapshot.empty) {
               existingData = querySnapshot.docs[0].data();
           }
-      } catch(e) {
-          console.log("Modo restringido: Asumiendo nuevo usuario.");
-      }
+      } catch(e) { console.log("Modo restringido"); }
 
       if (existingData) {
           setUserData(existingData);
           if (!existingData.isApproved) setView('pending');
           else setView(existingData.role === 'admin' ? 'admin' : 'dashboard');
       } else {
-          // Verificar si es el PRIMER usuario (para Admin)
           let isFirstUser = false;
           try {
               const snapshot = await getDocs(collection(db, 'artifacts', APP_ID, 'users'));
               isFirstUser = snapshot.empty;
           } catch (e) { isFirstUser = false; }
 
-          // Si el nombre es "Admin" o "Pastor", forzar rol Admin (Backdoor demo)
           const isSuperUser = nameToUse.toLowerCase() === 'admin' || nameToUse.toLowerCase() === 'pastor';
 
           await checkAndCreateProfile(currentUser, nameToUse, isFirstUser || isSuperUser);
@@ -284,7 +276,6 @@ export default function App() {
   // --- LÓGICA DE DATOS ---
   const activeUid = userData?.uid;
 
-  // Leer Lecturas
   useEffect(() => {
     if (!userData?.isApproved) return;
     const today = new Date().toISOString().split('T')[0];
@@ -297,7 +288,6 @@ export default function App() {
     });
   }, [userData]);
 
-  // Leer Comentarios
   useEffect(() => {
     if (!userData?.isApproved || todayReadings.length === 0) return;
     const unsubscribes = todayReadings.map(r => {
@@ -311,7 +301,6 @@ export default function App() {
     return () => unsubscribes.forEach(u => u());
   }, [todayReadings]);
 
-  // Leer Progreso
   useEffect(() => {
     if (!activeUid || todayReadings.length === 0) return;
     const unsubscribes = todayReadings.map(r => {
@@ -322,7 +311,6 @@ export default function App() {
     return () => unsubscribes.forEach(u => u());
   }, [activeUid, todayReadings]);
 
-  // Admin: Leer Usuarios
   useEffect(() => {
     if (userData?.role !== 'admin') return;
     return onSnapshot(collection(db, 'artifacts', APP_ID, 'users'), s => {
@@ -331,7 +319,6 @@ export default function App() {
   }, [userData]);
 
   // --- ACCIONES ---
-
   const toggleCompletion = async (readingId) => {
       if (!activeUid) return;
       const id = `${activeUid}_${readingId}`;
@@ -400,7 +387,7 @@ export default function App() {
             </Button>
             <div className="relative py-2"><div className="border-t"></div><span className="absolute top-0 left-1/2 -translate-x-1/2 bg-white px-2 text-xs text-slate-400">O invitado</span></div>
             <form onSubmit={handleManualLogin} className="space-y-3">
-                <input required className="w-full p-3 border rounded-lg text-sm" placeholder="Tu Nombre" value={loginName} onChange={e=>setLoginName(e.target.value)} />
+                <input required className="w-full p-3 border rounded-lg text-sm" placeholder="Tu Nombre (Ej. Juan)" value={loginName} onChange={e=>setLoginName(e.target.value)} />
                 <Button type="submit" variant="primary" className="w-full">Entrar / Recuperar</Button>
             </form>
         </div>
@@ -437,14 +424,14 @@ export default function App() {
   if (view === 'admin') return (
       <div className="min-h-screen bg-sky-50 pb-20">
           <Header/>
-          <main className="max-w-5xl mx-auto p-4 space-y-6">
+          <main className="max-w-7xl mx-auto p-4 space-y-6">
               <div className="flex gap-2 border-b pb-2 overflow-x-auto">
                   <Button variant={activeTab==='reading'?'primary':'ghost'} onClick={()=>setActiveTab('reading')} className="text-sm"><BookOpen size={16} className="mr-2"/> Lecturas</Button>
                   <Button variant={activeTab==='users'?'primary':'ghost'} onClick={()=>setActiveTab('users')} className="text-sm"><Users size={16} className="mr-2"/> Usuarios</Button>
               </div>
 
               {activeTab === 'reading' && (
-                  <div className="grid md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                       <Card className="p-6 h-fit">
                           <h2 className="font-bold text-lg mb-4 text-slate-800">Nueva Asignación</h2>
                           <form onSubmit={createReading} className="space-y-4">
@@ -488,21 +475,21 @@ export default function App() {
               )}
 
               {activeTab === 'users' && (
-                  <div className="space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {allUsers.map(u => (
-                          <Card key={u.id} className="p-4 flex items-center justify-between">
+                          <Card key={u.id} className="p-4 flex flex-col gap-3">
                               <div className="flex items-center gap-3">
                                   <img src={u.photoURL} className="w-10 h-10 rounded-full"/>
-                                  <div>
-                                      <div className="font-bold text-sm text-slate-800 flex items-center gap-1">{u.displayName} {u.role==='admin' && <ShieldCheck size={14} className="text-amber-500"/>}</div>
-                                      <div className="text-xs text-slate-500">{u.email}</div>
+                                  <div className="min-w-0">
+                                      <div className="font-bold text-sm text-slate-800 flex items-center gap-1 truncate">{u.displayName} {u.role==='admin' && <ShieldCheck size={14} className="text-amber-500"/>}</div>
+                                      <div className="text-xs text-slate-500 truncate">{u.email}</div>
                                   </div>
                               </div>
-                              <div className="flex gap-2">
+                              <div className="flex gap-2 justify-between pt-2 border-t">
                                   {u.uid !== user.uid && (
                                       <>
-                                          <button onClick={()=>updateUserStatus(u.id, 'isApproved', !u.isApproved)} className={`px-2 py-1 text-xs border rounded ${u.isApproved?'bg-emerald-50 text-emerald-600':'bg-slate-100'}`}>{u.isApproved?'Aprobado':'Aprobar'}</button>
-                                          <button onClick={()=>updateUserStatus(u.id, 'role', u.role==='admin'?'user':'admin')} className="px-2 py-1 text-xs border rounded text-amber-600">{u.role==='admin'?'Bajar':'Subir'}</button>
+                                          <button onClick={()=>updateUserStatus(u.id, 'isApproved', !u.isApproved)} className={`flex-1 px-2 py-1 text-xs border rounded ${u.isApproved?'bg-emerald-50 text-emerald-600':'bg-slate-100'}`}>{u.isApproved?'Aprobado':'Aprobar'}</button>
+                                          <button onClick={()=>updateUserStatus(u.id, 'role', u.role==='admin'?'user':'admin')} className="flex-1 px-2 py-1 text-xs border rounded text-amber-600">{u.role==='admin'?'Bajar':'Subir'}</button>
                                       </>
                                   )}
                               </div>
@@ -517,7 +504,7 @@ export default function App() {
   return (
       <div className="min-h-screen bg-sky-50 pb-20">
           <Header/>
-          <main className="max-w-3xl mx-auto p-4 space-y-6">
+          <main className="max-w-7xl mx-auto p-4 space-y-6">
               <div className="flex justify-between items-center">
                   <h2 className="font-serif font-bold text-xl text-slate-800">Lecturas de Hoy</h2>
                   <span className="text-sm bg-white px-3 py-1 rounded-full shadow-sm text-slate-500">{new Date().toLocaleDateString()}</span>
@@ -529,59 +516,63 @@ export default function App() {
                       <p>No hay lecturas asignadas para hoy.</p>
                   </div>
               ) : (
-                  todayReadings.map(r => {
-                      const isRead = completionsMap[r.id];
-                      const comments = commentsMap[r.id] || [];
-                      const showComments = activeReadingIdForComment === r.id;
-                      return (
-                          <Card key={r.id} className="overflow-hidden">
-                              <div className={`p-6 text-white relative ${r.type==='bible'?'bg-sky-600':'bg-amber-500'}`}>
-                                  <div className="relative z-10">
-                                      <span className="text-[10px] font-bold bg-white/20 px-2 py-1 rounded uppercase tracking-wider">{r.type==='bible'?'Bíblica':'Externo'}</span>
-                                      <h3 className="text-2xl font-serif font-bold mt-2">{r.scripture}</h3>
-                                      {r.type==='bible' && <p className="opacity-90">{r.title}</p>}
-                                  </div>
-                                  <BookOpen className="absolute right-4 bottom-4 opacity-20" size={64}/>
-                              </div>
-                              <div className="p-6">
-                                  {r.type === 'external' && (
-                                      <div className="mb-6 space-y-4">
-                                          {r.externalContent && <div className="bg-slate-50 p-4 rounded text-sm text-slate-600">{r.externalContent}</div>}
-                                          {r.externalLink && <a href={r.externalLink} target="_blank" className="flex items-center gap-2 text-sky-600 font-bold text-sm hover:underline"><LinkIcon size={16}/> Abrir Recurso</a>}
-                                      </div>
-                                  )}
-                                  {r.observation && (
-                                      <div className="bg-amber-50 p-4 rounded border-l-4 border-amber-400 mb-6 text-sm text-slate-700 italic">
-                                          <span className="block font-bold text-xs text-amber-700 not-italic mb-1">Nota Pastoral:</span>
-                                          "{r.observation}"
-                                      </div>
-                                  )}
-                                  <button onClick={()=>toggleCompletion(r.id)} className={`w-full py-3 rounded font-bold flex items-center justify-center gap-2 transition-colors ${isRead?'bg-emerald-50 text-emerald-600':'bg-slate-900 text-white hover:bg-slate-800'}`}>
-                                      {isRead ? <><CheckCircle size={18}/> Completado</> : 'Marcar como Leído'}
-                                  </button>
-                              </div>
-                              <div className="bg-slate-50 border-t p-4">
-                                  <button onClick={()=>setActiveReadingIdForComment(showComments?null:r.id)} className="text-sm text-slate-500 hover:text-sky-600 flex items-center gap-2 w-full">
-                                      <MessageSquare size={16}/> {comments.length} Comentarios <ChevronDown size={14} className={`ml-auto transform ${showComments?'rotate-180':''}`}/>
-                                  </button>
-                                  {showComments && (
-                                      <div className="mt-4 space-y-3">
-                                          <div className="max-h-60 overflow-y-auto space-y-3 pr-2">
-                                              {comments.map(c=>(
-                                                  <div key={c.id} className="bg-white p-3 rounded border text-sm">
-                                                      <div className="flex justify-between mb-1"><span className="font-bold text-slate-700">{c.userName}</span><span className="text-[10px] text-slate-400">{new Date(c.createdAt?.seconds*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span></div>
-                                                      <p className="text-slate-600">{c.text}</p>
-                                                  </div>
-                                              ))}
-                                              {comments.length===0 && <p className="text-center text-xs text-slate-400">Sin comentarios.</p>}
-                                          </div>
-                                          <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2"><input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe algo..." value={commentText} onChange={e=>setCommentText(e.target.value)}/><button type="submit" disabled={!commentText.trim()} className="bg-sky-500 text-white p-2 rounded"><Send size={16}/></button></form>
-                                      </div>
-                                  )}
-                              </div>
-                          </Card>
-                      );
-                  })
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-start">
+                    {todayReadings.map(r => {
+                        const isRead = completionsMap[r.id];
+                        const comments = commentsMap[r.id] || [];
+                        const showComments = activeReadingIdForComment === r.id;
+                        return (
+                            <Card key={r.id} className="overflow-hidden flex flex-col h-full">
+                                <div className={`p-6 text-white relative ${r.type==='bible'?'bg-sky-600':'bg-amber-500'}`}>
+                                    <div className="relative z-10">
+                                        <span className="text-[10px] font-bold bg-white/20 px-2 py-1 rounded uppercase tracking-wider">{r.type==='bible'?'Bíblica':'Externo'}</span>
+                                        <h3 className="text-2xl font-serif font-bold mt-2">{r.scripture}</h3>
+                                        {r.type==='bible' && <p className="opacity-90 text-sm">{r.title}</p>}
+                                    </div>
+                                    <BookOpen className="absolute right-4 bottom-4 opacity-20" size={64}/>
+                                </div>
+                                <div className="p-6 flex-1 flex flex-col">
+                                    {r.type === 'external' && (
+                                        <div className="mb-6 space-y-4">
+                                            {r.externalContent && <div className="bg-slate-50 p-4 rounded text-sm text-slate-600 line-clamp-4">{r.externalContent}</div>}
+                                            {r.externalLink && <a href={r.externalLink} target="_blank" className="flex items-center gap-2 text-sky-600 font-bold text-sm hover:underline mt-auto"><LinkIcon size={16}/> Abrir Recurso</a>}
+                                        </div>
+                                    )}
+                                    {r.observation && (
+                                        <div className="bg-amber-50 p-4 rounded border-l-4 border-amber-400 mb-6 text-sm text-slate-700 italic">
+                                            <span className="block font-bold text-xs text-amber-700 not-italic mb-1">Nota Pastoral:</span>
+                                            "{r.observation}"
+                                        </div>
+                                    )}
+                                    <div className="mt-auto">
+                                        <button onClick={()=>toggleCompletion(r.id)} className={`w-full py-3 rounded font-bold flex items-center justify-center gap-2 transition-colors ${isRead?'bg-emerald-50 text-emerald-600':'bg-slate-900 text-white hover:bg-slate-800'}`}>
+                                            {isRead ? <><CheckCircle size={18}/> Completado</> : 'Marcar como Leído'}
+                                        </button>
+                                    </div>
+                                </div>
+                                <div className="bg-slate-50 border-t p-4">
+                                    <button onClick={()=>setActiveReadingIdForComment(showComments?null:r.id)} className="text-sm text-slate-500 hover:text-sky-600 flex items-center gap-2 w-full">
+                                        <MessageSquare size={16}/> {comments.length} Comentarios <ChevronDown size={14} className={`ml-auto transform ${showComments?'rotate-180':''}`}/>
+                                    </button>
+                                    {showComments && (
+                                        <div className="mt-4 space-y-3">
+                                            <div className="max-h-60 overflow-y-auto space-y-3 pr-2">
+                                                {comments.map(c=>(
+                                                    <div key={c.id} className="bg-white p-3 rounded border text-sm">
+                                                        <div className="flex justify-between mb-1"><span className="font-bold text-slate-700">{c.userName}</span><span className="text-[10px] text-slate-400">{new Date(c.createdAt?.seconds*1000).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span></div>
+                                                        <p className="text-slate-600">{c.text}</p>
+                                                    </div>
+                                                ))}
+                                                {comments.length===0 && <p className="text-center text-xs text-slate-400">Sin comentarios.</p>}
+                                            </div>
+                                            <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2"><input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe algo..." value={commentText} onChange={e=>setCommentText(e.target.value)}/><button type="submit" disabled={!commentText.trim()} className="bg-sky-500 text-white p-2 rounded"><Send size={16}/></button></form>
+                                        </div>
+                                    )}
+                                </div>
+                            </Card>
+                        );
+                    })}
+                  </div>
               )}
           </main>
       </div>
