@@ -30,7 +30,7 @@ import {
   PlusCircle, BarChart2, Edit3, Save, ChevronDown, Youtube, ScrollText, 
   ArrowRight, ExternalLink, Shield, ShieldAlert, ShieldCheck, Bell, X, 
   AlertTriangle, FileText, Link as LinkIcon, Clock, CheckSquare, Activity, Book,
-  Flame, Award, Crown, Star, Medal, Zap, MessageCircle
+  Flame, Award, Crown, Star, Medal, Zap, MessageCircle, AlertCircle
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE (PRODUCCIÓN) ---
@@ -54,8 +54,7 @@ const APP_ID = 'teologia-paulina-app';
 // --- CONFIGURACIÓN DE IDENTIDAD ---
 const LOGO_URL = "https://i.ibb.co/rD9fNMv/1764042450953.png";
 const YOUTUBE_CHANNEL = "https://youtube.com/@teologiapaulina?si=5gwOAmgbXHh1hbgc";
-// URL de la App para incluir en el mensaje de WhatsApp (ajusta si tu dominio cambia)
-const APP_URL = "https://teologia-paulina-app.vercel.app";
+const APP_URL = "https://teologia-paulina-app.vercel.app"; // Variable recuperada
 
 // --- Estructura Bíblica ---
 const BIBLE_STRUCTURE = {
@@ -584,7 +583,7 @@ export default function App() {
                                                  : <div className="text-xs text-slate-300 mt-1 italic">Sin comentario pastoral</div>}
                                           </div>
                                           <div className="flex gap-2 ml-2 items-center">
-                                              {/* BOTÓN DE NOTIFICAR POR WHATSAPP */}
+                                              {/* BOTÓN WHATSAPP */}
                                               <button onClick={() => sendWhatsAppNotification(r)} className="text-emerald-500 hover:bg-emerald-50 p-1 rounded" title="Compartir en WhatsApp"><MessageCircle size={16}/></button>
                                               <button onClick={()=>setEditingReading(r)} className="text-sky-500 hover:bg-sky-50 p-1 rounded" title="Editar"><Edit3 size={16}/></button>
                                               <button onClick={()=>deleteReading(r.id)} className="text-slate-300 hover:text-red-500 p-1 rounded" title="Borrar"><X size={16}/></button>
@@ -596,7 +595,7 @@ export default function App() {
                       </div>
                   </div>
               )}
-
+              
               {activeTab === 'users' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {allUsers.map(u => (
@@ -637,13 +636,275 @@ export default function App() {
                              <div className="text-xs uppercase text-slate-400 font-bold">Estudiantes</div>
                           </Card>
                       </div>
-                      
-                      {/* ... stats content ... (Same as before) */}
+
+                      <div className="flex justify-center gap-4 mb-4">
+                          <button onClick={() => setStatsMode('byUser')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byUser' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Estudiante</button>
+                          <button onClick={() => setStatsMode('byReading')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byReading' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Lectura</button>
+                      </div>
+
+                      {statsMode === 'byUser' ? (
+                          <Card className="overflow-hidden">
+                              <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm flex justify-between items-center">
+                                  <span>Progreso por Estudiante</span>
+                                  <span className="text-xs font-normal text-slate-500">Clic para ver pendientes</span>
+                              </div>
+                              <div className="divide-y max-h-96 overflow-y-auto">
+                                  {allUsers.map(u => {
+                                      const userReadIds = allCompletions.filter(c => c.userId === u.uid).map(c => c.readingId);
+                                      const pendingReadings = allReadings.filter(r => !userReadIds.includes(r.id));
+                                      const isExpanded = expandedStatItem === u.id;
+                                      
+                                      return (
+                                          <div key={u.id}>
+                                              <div 
+                                                className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
+                                                onClick={() => setExpandedStatItem(isExpanded ? null : u.id)}
+                                              >
+                                                  <div className="flex items-center gap-3">
+                                                      <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
+                                                      <div>
+                                                          <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
+                                                          <div className="text-xs text-slate-400 flex gap-2">
+                                                              <span className="text-emerald-600">{userReadIds.length} completadas</span>
+                                                              <span>•</span>
+                                                              <span className="text-red-400">{pendingReadings.length} pendientes</span>
+                                                          </div>
+                                                      </div>
+                                                  </div>
+                                                  <ChevronDown size={16} className={`text-slate-400 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
+                                              </div>
+                                              {isExpanded && (
+                                                  <div className="bg-red-50 p-3 border-t border-red-100 text-xs">
+                                                      <div className="font-bold text-red-600 mb-2 flex items-center gap-1"><AlertCircle size={12}/> Lecturas Pendientes:</div>
+                                                      {pendingReadings.length > 0 ? (
+                                                          <ul className="space-y-1 pl-4 list-disc text-slate-600">
+                                                              {pendingReadings.map(r => (
+                                                                  <li key={r.id}>
+                                                                      <span className="font-bold">{r.scripture || r.title}</span> 
+                                                                      <span className="text-slate-400 ml-1">({r.date})</span>
+                                                                  </li>
+                                                              ))}
+                                                          </ul>
+                                                      ) : (
+                                                          <p className="text-emerald-600 italic flex items-center gap-1"><CheckCircle size={12}/> ¡Está al día!</p>
+                                                      )}
+                                                  </div>
+                                              )}
+                                          </div>
+                                      );
+                                  })}
+                              </div>
+                          </Card>
+                      ) : (
+                          <Card className="overflow-hidden">
+                              <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Estado por Lectura</div>
+                              <div className="divide-y max-h-96 overflow-y-auto">
+                                  {allReadings.map(r => {
+                                      const readers = allCompletions.filter(c => c.readingId === r.id).map(c => c.userId);
+                                      const missingUsers = allUsers.filter(u => !readers.includes(u.uid));
+                                      const isExpanded = expandedStatItem === r.id;
+                                      
+                                      return (
+                                          <div key={r.id}>
+                                              <div 
+                                                className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
+                                                onClick={() => setExpandedStatItem(isExpanded ? null : r.id)}
+                                              >
+                                                  <div className="flex-1">
+                                                      <div className="text-sm font-bold text-slate-700">{r.scripture || r.title}</div>
+                                                      <div className="text-xs text-slate-400">{r.date}</div>
+                                                  </div>
+                                                  <div className="flex items-center gap-3">
+                                                      <div className="text-right">
+                                                          <div className="text-xs font-bold text-slate-600">{readers.length} / {allUsers.length}</div>
+                                                          <div className="w-20 bg-slate-100 rounded-full h-1.5 mt-1">
+                                                              <div className="bg-sky-500 h-1.5 rounded-full" style={{ width: `${(readers.length/allUsers.length)*100}%` }}></div>
+                                                          </div>
+                                                      </div>
+                                                      <ChevronDown size={16} className={`text-slate-400 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
+                                                  </div>
+                                              </div>
+                                              {isExpanded && (
+                                                  <div className="bg-slate-50 p-3 border-t text-xs flex gap-4">
+                                                      <div className="flex-1">
+                                                          <div className="font-bold text-emerald-600 mb-1">Completado por:</div>
+                                                          <div className="flex flex-wrap gap-1">
+                                                              {allUsers.filter(u => readers.includes(u.uid)).map(u => (
+                                                                  <span key={u.id} className="bg-white border border-emerald-100 px-2 py-0.5 rounded text-emerald-700">{u.displayName}</span>
+                                                              ))}
+                                                          </div>
+                                                      </div>
+                                                      <div className="flex-1 border-l pl-4 border-slate-200">
+                                                          <div className="font-bold text-red-500 mb-1">Pendiente:</div>
+                                                          <div className="flex flex-wrap gap-1">
+                                                              {missingUsers.map(u => (
+                                                                  <span key={u.id} className="bg-white border border-red-100 px-2 py-0.5 rounded text-red-600">{u.displayName}</span>
+                                                              ))}
+                                                          </div>
+                                                      </div>
+                                                  </div>
+                                              )}
+                                          </div>
+                                      );
+                                  })}
+                              </div>
+                          </Card>
+                      )}
                   </div>
               )}
           </main>
       </div>
   );
 
-  // ... user view ...
+  // --- USER VIEW ---
+  const groupedReadings = getGroupedReadings(userFilter);
+  const sortedDates = Object.keys(groupedReadings).sort().reverse();
+
+  return (
+      <div className="min-h-screen bg-sky-50 pb-20">
+          {notification && <Toast message={notification.msg} type={notification.type} onClose={() => setNotification(null)} />}
+          <Header/>
+          <main className="max-w-3xl mx-auto p-4 space-y-6">
+              
+              {/* SECCIÓN DE LOGROS (GAMIFICACIÓN) */}
+              <Card className="p-4 mb-6 bg-gradient-to-r from-sky-600 to-blue-600 text-white border-none shadow-lg">
+                  <div className="flex items-center justify-between mb-4">
+                      <h3 className="font-bold font-serif text-lg flex items-center gap-2"><Activity size={20}/> Mis Logros</h3>
+                      <div className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
+                          <Flame size={14}/> {streak} días racha
+                      </div>
+                  </div>
+                  <div className="grid grid-cols-4 gap-2 text-center">
+                      {BADGES.map((badge, idx) => {
+                          // Determinar si la insignia está desbloqueada
+                          const isUnlocked = streak >= badge.days;
+                          const Icon = badge.icon;
+                          
+                          return (
+                              <div key={idx} className={`flex flex-col items-center p-2 rounded-lg transition-all ${isUnlocked ? 'bg-white/10 opacity-100 scale-105' : 'opacity-40 grayscale'}`}>
+                                  <div className={`p-2 rounded-full mb-1 bg-white ${badge.color}`}>
+                                      <Icon size={20} />
+                                  </div>
+                                  <span className="text-[10px] font-bold leading-tight">{badge.label}</span>
+                              </div>
+                          )
+                      })}
+                  </div>
+              </Card>
+
+              {/* Tabs Pendiente/Completado */}
+              <div className="flex p-1 bg-slate-200 rounded-lg">
+                  <button onClick={()=>setUserFilter('pending')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${userFilter==='pending'?'bg-white text-sky-600 shadow-sm':'text-slate-500'}`}>Pendientes</button>
+                  <button onClick={()=>setUserFilter('completed')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${userFilter==='completed'?'bg-white text-emerald-600 shadow-sm':'text-slate-500'}`}>Completadas</button>
+              </div>
+
+              {sortedDates.length === 0 ? (
+                  <div className="text-center p-12 text-slate-400 bg-white rounded-xl border border-slate-100">
+                      <ScrollText size={48} className="mx-auto mb-4 text-sky-200"/>
+                      <p>No hay lecturas {userFilter === 'pending' ? 'pendientes' : 'completadas'}.</p>
+                  </div>
+              ) : (
+                  sortedDates.map(date => (
+                      <div key={date} className="space-y-3">
+                          <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-wider px-2">
+                              <Calendar size={14}/> {date === new Date().toISOString().split('T')[0] ? 'Hoy' : new Date(date).toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
+                              <div className="h-px bg-slate-200 flex-1"></div>
+                          </div>
+                          
+                          {groupedReadings[date].map(r => {
+                              const isRead = completionsMap[r.id];
+                              const comments = commentsMap[r.id] || [];
+                              const showComments = activeReadingIdForComment === r.id;
+                              const isNewReading = isNew(r.createdAt);
+
+                              return (
+                                  <Card key={r.id} className="overflow-hidden">
+                                      <div className={`p-4 flex justify-between items-start ${r.type==='bible'?'bg-white border-l-4 border-sky-500':'bg-white border-l-4 border-amber-400'}`}>
+                                          <div className="flex-1">
+                                              <div className="flex gap-2 mb-1">
+                                                <span className={`text-[10px] font-bold uppercase tracking-widest block ${r.type==='bible'?'text-sky-500':'text-amber-600'}`}>{r.type==='bible'?'Bíblica':'Externo'}</span>
+                                                {isNewReading && <Badge color="red">NUEVO</Badge>}
+                                              </div>
+                                              <h3 className="text-lg font-bold text-slate-800">{r.scripture}</h3>
+                                              {r.title && <p className="text-sm text-slate-500">{r.title}</p>}
+                                              
+                                              {r.type === 'external' && r.externalLink && (
+                                                  <a href={r.externalLink} target="_blank" className="mt-2 inline-flex items-center gap-1 text-xs text-sky-600 font-bold hover:underline border px-2 py-1 rounded bg-sky-50 border-sky-100"><LinkIcon size={12}/> Ver Recurso</a>
+                                              )}
+                                              
+                                              {r.observation && (
+                                                  <div className="mt-3 bg-slate-50 p-3 rounded text-sm text-slate-600 italic border-l-2 border-slate-300">
+                                                      <span className="not-italic font-bold text-xs text-slate-400 block mb-1">Observación:</span>
+                                                      {r.observation}
+                                                  </div>
+                                              )}
+                                          </div>
+                                          <button onClick={()=>toggleCompletion(r.id)} className={`p-2 rounded-full ${isRead?'text-emerald-500 bg-emerald-50':'text-slate-300 hover:bg-slate-100'}`}>
+                                              {isRead ? <CheckCircle size={24} fill="currentColor" className="text-emerald-100"/> : <div className="w-6 h-6 rounded-full border-2 border-slate-300"></div>}
+                                          </button>
+                                      </div>
+                                      
+                                      {/* Comentarios Mini - MODIFICADO A BOTÓN GRANDE */}
+                                      <div className="bg-slate-50/50 border-t p-2">
+                                          <button 
+                                              onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)}
+                                              className={`flex items-center gap-2 px-4 py-2 rounded-lg w-full justify-center text-sm font-medium transition-colors ${
+                                                  showComments 
+                                                  ? 'bg-slate-200 text-slate-800' 
+                                                  : 'bg-sky-50 text-sky-600 hover:bg-sky-100'
+                                              }`}
+                                          >
+                                              <MessageSquare size={18} />
+                                              {comments.length > 0 ? `Ver ${comments.length} Comentarios` : 'Escribir un comentario'}
+                                              <ChevronDown 
+                                                  size={16} 
+                                                  className={`ml-auto transform transition-transform duration-200 ${showComments ? 'rotate-180' : ''}`} 
+                                              />
+                                          </button>
+                                          
+                                          {r.externalContent && !showComments && (
+                                             <div className="text-center mt-2 text-xs text-slate-400 flex justify-center gap-1">
+                                                <FileText size={12}/> Incluye contenido de lectura
+                                             </div>
+                                          )}
+                                      </div>
+
+                                      {/* Área Expandible */}
+                                      {showComments && (
+                                          <div className="p-4 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top-1">
+                                              {r.externalContent && (
+                                                  <div className="mb-4 p-3 bg-white rounded border text-sm text-slate-700 max-h-40 overflow-y-auto shadow-sm">
+                                                      {r.externalContent}
+                                                  </div>
+                                              )}
+                                              
+                                              <div className="space-y-3 mb-3">
+                                                  {comments.map(c => (
+                                                      <div key={c.id} className="flex gap-2 items-start">
+                                                          <img src={c.userPhoto} className="w-6 h-6 rounded-full mt-1"/>
+                                                          <div className="bg-white p-2 rounded-r-lg rounded-bl-lg border text-sm flex-1">
+                                                              <div className="font-bold text-xs text-slate-700">{c.userName}</div>
+                                                              <p className="text-slate-600">{c.text}</p>
+                                                          </div>
+                                                      </div>
+                                                  ))}
+                                                  {comments.length === 0 && (
+                                                      <p className="text-center text-xs text-slate-400 italic py-2">Sé el primero en compartir tu reflexión.</p>
+                                                  )}
+                                              </div>
+                                              <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2">
+                                                  <input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe..." value={commentText} onChange={e=>setCommentText(e.target.value)}/>
+                                                  <button type="submit" disabled={!commentText.trim()} className="text-sky-500 hover:bg-sky-100 p-2 rounded"><Send size={16}/></button>
+                                              </form>
+                                          </div>
+                                      )}
+                                  </Card>
+                              );
+                          })}
+                      </div>
+                  ))
+              )}
+          </main>
+      </div>
+  );
 }
