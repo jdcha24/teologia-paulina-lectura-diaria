@@ -374,7 +374,8 @@ export default function App() {
   if (loading) return <div className="h-screen flex items-center justify-center bg-sky-50"><Loader2 className="animate-spin text-sky-600" size={48}/></div>;
 
   if (view === 'login') return (
-    <div className="min-h-screen bg-gradient-to-br from-sky-500 to-sky-600 flex items-center justify-center p-4">
+    // AGREGADO: w-full para asegurar que ocupe todo el ancho
+    <div className="min-h-screen w-full bg-gradient-to-br from-sky-500 to-sky-600 flex items-center justify-center p-4">
       <Card className="w-full max-w-md p-8 border-none shadow-2xl">
         <div className="text-center mb-8">
           <div className="w-24 h-24 mx-auto mb-4 bg-white rounded-full p-2"><img src={LOGO_URL} className="w-full h-full object-contain"/></div>
