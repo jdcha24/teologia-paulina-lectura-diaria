@@ -310,48 +310,80 @@ export default function App() {
     });
   }, [userData]); 
 
-  // Leer Progreso Personal
+  // Leer Progreso Personal y CALCULAR RACHA COMPLEJA
   useEffect(() => {
-    if (!activeUid) return;
+    if (!activeUid || allReadings.length === 0) return; // Necesitamos lecturas para saber el total del día
+
     const q = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
     return onSnapshot(q, (snapshot) => {
         const map = {};
-        const dates = new Set();
+        const completedReadingsByDate = {}; // { '2023-11-28': Set(readingId1, readingId2) }
         
-        const validReadingIds = new Set(allReadings.map(r => r.id));
-
         snapshot.docs.forEach(doc => {
             const data = doc.data();
-            if (validReadingIds.has(data.readingId)) {
-                map[data.readingId] = true;
-                if (data.completedAt) {
-                    const dateStr = new Date(data.completedAt.seconds * 1000).toLocaleDateString("en-CA"); // YYYY-MM-DD local
-                    dates.add(dateStr);
+            map[data.readingId] = true;
+            
+            // Buscar la lectura original para saber su fecha asignada
+            const reading = allReadings.find(r => r.id === data.readingId);
+            if (reading) {
+                if (!completedReadingsByDate[reading.date]) {
+                    completedReadingsByDate[reading.date] = new Set();
                 }
+                completedReadingsByDate[reading.date].add(reading.id);
             }
         });
         setCompletionsMap(map);
         
-        // Racha
-        let currentStreak = 0;
-        const today = getLocalDate();
-        const yesterdayDate = new Date();
-        yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-        const yesterday = yesterdayDate.toISOString().split('T')[0]; // Aprox para lógica simple
+        // CALCULO DE RACHA (STREAK) ESTRICTO
+        // 1. Agrupar lecturas totales por día
+        const totalReadingsByDate = {};
+        allReadings.forEach(r => {
+            if (!totalReadingsByDate[r.date]) totalReadingsByDate[r.date] = 0;
+            totalReadingsByDate[r.date]++;
+        });
 
-        let checkDate = new Date();
+        // 2. Verificar qué días están 100% completados
+        const fullyCompletedDates = new Set();
+        Object.keys(totalReadingsByDate).forEach(date => {
+            const required = totalReadingsByDate[date];
+            const completed = completedReadingsByDate[date] ? completedReadingsByDate[date].size : 0;
+            if (completed >= required && required > 0) {
+                fullyCompletedDates.add(date);
+            }
+        });
+
+        // 3. Contar días consecutivos hacia atrás
+        let currentStreak = 0;
+        let checkDate = new Date(); // Hoy
         
-        if (!dates.has(today)) {
-             if (!dates.has(yesterday)) { setStreak(0); return; }
-             checkDate = new Date(Date.now() - 86400000);
+        // Ajuste de zona horaria para comparación simple
+        const todayStr = checkDate.toISOString().split('T')[0];
+        const yesterday = new Date(checkDate);
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayStr = yesterday.toISOString().split('T')[0];
+        
+        // Si hoy no está completo, empezamos a chequear desde ayer
+        // Si hoy sí está completo, empezamos desde hoy
+        let pointerDate = new Date();
+        
+        if (!fullyCompletedDates.has(todayStr)) {
+            if (!fullyCompletedDates.has(yesterdayStr)) {
+                // Ni hoy ni ayer completados -> Racha rota o 0
+                setStreak(0);
+                return;
+            }
+            // Empezamos desde ayer
+            pointerDate = yesterday;
         }
+
+        // Loop hacia atrás
         while (true) {
-            const dateStr = checkDate.toISOString().split('T')[0];
-            if (dates.has(dateStr)) {
+            const dateStr = pointerDate.toISOString().split('T')[0];
+            if (fullyCompletedDates.has(dateStr)) {
                 currentStreak++;
-                checkDate.setDate(checkDate.getDate() - 1);
+                pointerDate.setDate(pointerDate.getDate() - 1);
             } else {
-                break;
+                break; // Se rompió la cadena
             }
         }
         setStreak(currentStreak);
@@ -388,9 +420,18 @@ export default function App() {
   // --- ACCIONES ---
   const toggleCompletion = async (readingId) => {
       if (!activeUid) return;
+      
+      // CONFIRMACIÓN DE SEGURIDAD
+      const isComplete = completionsMap[readingId];
+      const message = isComplete 
+        ? "¿Deseas marcar esta lectura como pendiente? Perderás el progreso del día." 
+        : "Confirma que has leído y estudiado el material de hoy.";
+      
+      if (!confirm(message)) return;
+
       const id = `${activeUid}_${readingId}`;
       const ref = doc(db, 'artifacts', APP_ID, 'completions', id);
-      if (completionsMap[readingId]) await deleteDoc(ref);
+      if (isComplete) await deleteDoc(ref);
       else await setDoc(ref, { userId: activeUid, userName: userData.displayName, readingId, completedAt: serverTimestamp() });
   };
 
@@ -525,7 +566,7 @@ export default function App() {
           </div>
           <div className="flex gap-3 items-center">
               {streak > 0 && (
-                  <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-full border border-amber-100" title={`${streak} días totales`}>
+                  <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-full border border-amber-100" title={`${streak} días seguidos`}>
                       <Flame size={16} className="text-amber-500 fill-amber-500" /><span className="text-xs font-bold text-amber-600">{streak}</span>
                   </div>
               )}
@@ -836,7 +877,6 @@ export default function App() {
                               <Calendar size={14}/> {date === getLocalDate() ? 'Hoy' : new Date(date + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
                               <div className="h-px bg-slate-200 flex-1"></div>
                           </div>
-                          
                           {groupedReadings[date].map(r => {
                               const isRead = completionsMap[r.id];
                               const comments = commentsMap[r.id] || [];
@@ -870,6 +910,7 @@ export default function App() {
                                           </button>
                                       </div>
                                       
+                                      {/* Comentarios Mini - MODIFICADO A BOTÓN GRANDE */}
                                       <div className="bg-slate-50/50 border-t p-2">
                                           <button 
                                               onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)}
@@ -894,6 +935,7 @@ export default function App() {
                                           )}
                                       </div>
 
+                                      {/* Área Expandible */}
                                       {showComments && (
                                           <div className="p-4 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top-1">
                                               {r.externalContent && (
