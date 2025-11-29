@@ -86,7 +86,6 @@ const BADGES = [
 ];
 
 // --- Funciones Auxiliares ---
-// Obtiene la fecha LOCAL del usuario en formato YYYY-MM-DD (Corrige el error de zona horaria)
 const getLocalDate = () => {
     const d = new Date();
     const year = d.getFullYear();
@@ -152,7 +151,7 @@ export default function App() {
   // Inputs
   const [commentText, setCommentText] = useState('');
   const [newReading, setNewReading] = useState({ 
-    type: 'bible', date: getLocalDate(), // USAMOS FECHA LOCAL
+    type: 'bible', date: getLocalDate(), 
     title: '', startBook: 'Romanos', startChapter: '1', endBook: 'Romanos', endChapter: '1', verses: '', 
     externalLink: '', externalContent: '', observation: '' 
   });
@@ -279,14 +278,10 @@ export default function App() {
     });
   }, [userData]);
 
-  // Leer Comentarios (ARREGLO DE SINCRONIZACIÓN)
+  // Leer Comentarios
   useEffect(() => {
-    if (!userData?.isApproved) return;
-    
-    // Escuchamos la colección completa de comentarios para evitar problemas de dependencias vacías
-    // y ordenamos en cliente si falla el índice, o por defecto si funciona.
-    const q = query(collection(db, 'artifacts', APP_ID, 'comments'));
-    
+    if (!userData?.isApproved || allReadings.length === 0) return;
+    const q = query(collection(db, 'artifacts', APP_ID, 'comments'), orderBy('createdAt', 'desc'));
     return onSnapshot(q, (snapshot) => {
         const newMap = {};
         snapshot.docs.forEach(doc => {
@@ -294,16 +289,26 @@ export default function App() {
             if (!newMap[d.readingId]) newMap[d.readingId] = [];
             newMap[d.readingId].push({id: doc.id, ...d});
         });
-        
-        // Ordenar todos los grupos de comentarios
-        Object.keys(newMap).forEach(k => {
-             newMap[k].sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0)); // Descendente
-        });
-        
         setCommentsMap(newMap);
-    }, (error) => console.error("Error comentarios:", error));
-
-  }, [userData]); // Solo depende del usuario, no de las lecturas, para que sea persistente
+    }, (e) => {
+        // Fallback sin indice
+        if (e.code === 'failed-precondition') {
+             const q2 = query(collection(db, 'artifacts', APP_ID, 'comments'));
+             onSnapshot(q2, (snap) => {
+                const newMap = {};
+                snap.docs.forEach(doc => {
+                    const d = doc.data();
+                    if (!newMap[d.readingId]) newMap[d.readingId] = [];
+                    newMap[d.readingId].push({id: doc.id, ...d});
+                });
+                 Object.keys(newMap).forEach(k => {
+                     newMap[k].sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+                 });
+                 setCommentsMap(newMap);
+             });
+        }
+    });
+  }, [userData]); 
 
   // Leer Progreso Personal
   useEffect(() => {
@@ -335,9 +340,21 @@ export default function App() {
         const yesterday = yesterdayDate.toISOString().split('T')[0]; // Aprox para lógica simple
 
         let checkDate = new Date();
-        // Simplificación de racha: contar días consecutivos hacia atrás presentes en 'dates'
-        // ... (Lógica de racha simplificada para demo)
-        setStreak(dates.size); // Por ahora mostramos total de días cumplidos como racha simple para evitar bugs de zona horaria complejos en demo
+        
+        if (!dates.has(today)) {
+             if (!dates.has(yesterday)) { setStreak(0); return; }
+             checkDate = new Date(Date.now() - 86400000);
+        }
+        while (true) {
+            const dateStr = checkDate.toISOString().split('T')[0];
+            if (dates.has(dateStr)) {
+                currentStreak++;
+                checkDate.setDate(checkDate.getDate() - 1);
+            } else {
+                break;
+            }
+        }
+        setStreak(currentStreak);
     });
   }, [activeUid, allReadings]);
 
@@ -410,6 +427,13 @@ export default function App() {
       }
       await addDoc(collection(db, 'artifacts', APP_ID, 'readings'), data);
       
+      // RESETEAR FORMULARIO
+      setNewReading({ 
+        type: 'bible', date: date, // Mantiene fecha actual/seleccionada
+        title: '', startBook: 'Romanos', startChapter: '1', endBook: 'Romanos', endChapter: '1', verses: '', 
+        externalLink: '', externalContent: '', observation: '' 
+      });
+
       if(confirm("Lectura creada exitosamente.\n\n¿Deseas enviar la notificación por WhatsApp ahora?")) {
           sendWhatsAppNotification({...data}); 
       }
@@ -594,28 +618,7 @@ export default function App() {
                       </div>
                   </div>
               )}
-
-              {/* ... Stats & Users Panel (same as before) ... */}
-              {activeTab === 'stats' && (
-                  <div className="space-y-6">
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                          <Card className="p-4 text-center bg-sky-50 border-sky-100">
-                             <div className="text-2xl font-bold text-sky-600">{allReadings.length}</div>
-                             <div className="text-xs uppercase text-sky-400 font-bold">Lecturas Totales</div>
-                          </Card>
-                          <Card className="p-4 text-center bg-emerald-50 border-emerald-100">
-                             <div className="text-2xl font-bold text-emerald-600">{allCompletions.filter(c => allReadings.find(r => r.id === c.readingId)).length}</div>
-                             <div className="text-xs uppercase text-emerald-400 font-bold">Leídas (Total)</div>
-                          </Card>
-                          <Card className="p-4 text-center">
-                             <div className="text-2xl font-bold text-slate-600">{allUsers.length}</div>
-                             <div className="text-xs uppercase text-slate-400 font-bold">Estudiantes</div>
-                          </Card>
-                      </div>
-                      {/* ... rest of stats ... */}
-                  </div>
-              )}
-
+              
               {activeTab === 'users' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {allUsers.map(u => (
@@ -637,6 +640,143 @@ export default function App() {
                               </div>
                           </Card>
                       ))}
+                  </div>
+              )}
+
+              {activeTab === 'stats' && (
+                  <div className="space-y-6">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                          <Card className="p-4 text-center bg-sky-50 border-sky-100">
+                             <div className="text-2xl font-bold text-sky-600">{allReadings.length}</div>
+                             <div className="text-xs uppercase text-sky-400 font-bold">Lecturas Totales</div>
+                          </Card>
+                          <Card className="p-4 text-center bg-emerald-50 border-emerald-100">
+                             <div className="text-2xl font-bold text-emerald-600">{allCompletions.filter(c => allReadings.find(r => r.id === c.readingId)).length}</div>
+                             <div className="text-xs uppercase text-emerald-400 font-bold">Leídas (Total)</div>
+                          </Card>
+                          <Card className="p-4 text-center">
+                             <div className="text-2xl font-bold text-slate-600">{allUsers.length}</div>
+                             <div className="text-xs uppercase text-slate-400 font-bold">Estudiantes</div>
+                          </Card>
+                      </div>
+
+                      <div className="flex justify-center gap-4 mb-4">
+                          <button onClick={() => setStatsMode('byUser')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byUser' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Estudiante</button>
+                          <button onClick={() => setStatsMode('byReading')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byReading' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Lectura</button>
+                      </div>
+
+                      {statsMode === 'byUser' ? (
+                          <Card className="overflow-hidden">
+                              <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm flex justify-between items-center">
+                                  <span>Progreso por Estudiante</span>
+                                  <span className="text-xs font-normal text-slate-500">Clic para ver pendientes</span>
+                              </div>
+                              <div className="divide-y max-h-96 overflow-y-auto">
+                                  {allUsers.map(u => {
+                                      const validReadingIds = new Set(allReadings.map(r => r.id));
+                                      const userReadIds = allCompletions
+                                        .filter(c => c.userId === u.uid && validReadingIds.has(c.readingId))
+                                        .map(c => c.readingId);
+                                      
+                                      const pendingReadings = allReadings.filter(r => !userReadIds.includes(r.id));
+                                      const isExpanded = expandedStatItem === u.id;
+                                      
+                                      return (
+                                          <div key={u.id}>
+                                              <div 
+                                                className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
+                                                onClick={() => setExpandedStatItem(isExpanded ? null : u.id)}
+                                              >
+                                                  <div className="flex items-center gap-3">
+                                                      <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
+                                                      <div>
+                                                          <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
+                                                          <div className="text-xs text-slate-400 flex gap-2">
+                                                              <span className="text-emerald-600">{userReadIds.length} completadas</span>
+                                                              <span>•</span>
+                                                              <span className="text-red-400">{pendingReadings.length} pendientes</span>
+                                                          </div>
+                                                      </div>
+                                                  </div>
+                                                  <ChevronDown size={16} className={`text-slate-400 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
+                                              </div>
+                                              {isExpanded && (
+                                                  <div className="bg-red-50 p-3 border-t border-red-100 text-xs">
+                                                      <div className="font-bold text-red-600 mb-2 flex items-center gap-1"><AlertCircle size={12}/> Lecturas Pendientes:</div>
+                                                      {pendingReadings.length > 0 ? (
+                                                          <ul className="space-y-1 pl-4 list-disc text-slate-600">
+                                                              {pendingReadings.map(r => (
+                                                                  <li key={r.id}>
+                                                                      <span className="font-bold">{r.scripture || r.title}</span> 
+                                                                      <span className="text-slate-400 ml-1">({r.date})</span>
+                                                                  </li>
+                                                              ))}
+                                                          </ul>
+                                                      ) : (
+                                                          <p className="text-emerald-600 italic flex items-center gap-1"><CheckCircle size={12}/> ¡Está al día!</p>
+                                                      )}
+                                                  </div>
+                                              )}
+                                          </div>
+                                      );
+                                  })}
+                              </div>
+                          </Card>
+                      ) : (
+                          <Card className="overflow-hidden">
+                              <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Estado por Lectura</div>
+                              <div className="divide-y max-h-96 overflow-y-auto">
+                                  {allReadings.map(r => {
+                                      const readers = allCompletions.filter(c => c.readingId === r.id).map(c => c.userId);
+                                      const missingUsers = allUsers.filter(u => !readers.includes(u.uid));
+                                      const isExpanded = expandedStatItem === r.id;
+                                      
+                                      return (
+                                          <div key={r.id}>
+                                              <div 
+                                                className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
+                                                onClick={() => setExpandedStatItem(isExpanded ? null : r.id)}
+                                              >
+                                                  <div className="flex-1">
+                                                      <div className="text-sm font-bold text-slate-700">{r.scripture || r.title}</div>
+                                                      <div className="text-xs text-slate-400">{r.date}</div>
+                                                  </div>
+                                                  <div className="flex items-center gap-3">
+                                                      <div className="text-right">
+                                                          <div className="text-xs font-bold text-slate-600">{readers.length} / {allUsers.length}</div>
+                                                          <div className="w-20 bg-slate-100 rounded-full h-1.5 mt-1">
+                                                              <div className="bg-sky-500 h-1.5 rounded-full" style={{ width: `${(readers.length/allUsers.length)*100}%` }}></div>
+                                                          </div>
+                                                      </div>
+                                                      <ChevronDown size={16} className={`text-slate-400 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
+                                                  </div>
+                                              </div>
+                                              {isExpanded && (
+                                                  <div className="bg-slate-50 p-3 border-t text-xs flex gap-4">
+                                                      <div className="flex-1">
+                                                          <div className="font-bold text-emerald-600 mb-1">Completado por:</div>
+                                                          <div className="flex flex-wrap gap-1">
+                                                              {allUsers.filter(u => readers.includes(u.uid)).map(u => (
+                                                                  <span key={u.id} className="bg-white border border-emerald-100 px-2 py-0.5 rounded text-emerald-700">{u.displayName}</span>
+                                                              ))}
+                                                          </div>
+                                                      </div>
+                                                      <div className="flex-1 border-l pl-4 border-slate-200">
+                                                          <div className="font-bold text-red-500 mb-1">Pendiente:</div>
+                                                          <div className="flex flex-wrap gap-1">
+                                                              {missingUsers.map(u => (
+                                                                  <span key={u.id} className="bg-white border border-red-100 px-2 py-0.5 rounded text-red-600">{u.displayName}</span>
+                                                              ))}
+                                                          </div>
+                                                      </div>
+                                                  </div>
+                                              )}
+                                          </div>
+                                      );
+                                  })}
+                              </div>
+                          </Card>
+                      )}
                   </div>
               )}
           </main>
