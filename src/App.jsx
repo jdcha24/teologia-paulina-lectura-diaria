@@ -75,7 +75,7 @@ const BIBLE_STRUCTURE = {
 };
 const BIBLE_BOOKS_ORDER = Object.keys(BIBLE_STRUCTURE);
 
-// --- Configuración de Insignias (ACTUALIZADO) ---
+// --- Configuración de Insignias ---
 const BADGES = [
   { days: 7, label: "1 Semana", icon: Star, color: "text-yellow-500", bg: "bg-yellow-100" },
   { days: 30, label: "1 Mes", icon: Medal, color: "text-blue-500", bg: "bg-blue-100" },
@@ -92,6 +92,15 @@ const getLocalDate = () => {
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+};
+
+const getPrevDateStr = (dateStr) => {
+   const d = new Date(dateStr + 'T12:00:00'); 
+   d.setDate(d.getDate() - 1);
+   const year = d.getFullYear();
+   const month = String(d.getMonth() + 1).padStart(2, '0');
+   const day = String(d.getDate()).padStart(2, '0');
+   return `${year}-${month}-${day}`;
 };
 
 // --- Componentes ---
@@ -278,7 +287,7 @@ export default function App() {
     });
   }, [userData]);
 
-  // Leer Comentarios (CORREGIDO: Añadida dependencia allReadings)
+  // Leer Comentarios (Persistente)
   useEffect(() => {
     if (!userData?.isApproved || allReadings.length === 0) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'comments'), orderBy('createdAt', 'desc'));
@@ -291,7 +300,6 @@ export default function App() {
         });
         setCommentsMap(newMap);
     }, (e) => {
-        // Fallback sin indice
         if (e.code === 'failed-precondition') {
              const q2 = query(collection(db, 'artifacts', APP_ID, 'comments'));
              onSnapshot(q2, (snap) => {
@@ -308,57 +316,75 @@ export default function App() {
              });
         }
     });
-  }, [userData, allReadings]); // <-- Importante: allReadings agregado para asegurar recarga
+  }, [userData, allReadings]); 
 
-  // Leer Progreso Personal
+  // Leer Progreso Personal y Calcular Racha
   useEffect(() => {
-    if (!activeUid) return;
+    if (!activeUid || allReadings.length === 0) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
+    
     return onSnapshot(q, (snapshot) => {
         const map = {};
-        const dates = new Set();
-        
-        const validReadingIds = new Set(allReadings.map(r => r.id));
+        const userCompletions = new Set();
 
         snapshot.docs.forEach(doc => {
             const data = doc.data();
-            if (validReadingIds.has(data.readingId)) {
-                map[data.readingId] = true;
-                if (data.completedAt) {
-                    const dateStr = new Date(data.completedAt.seconds * 1000).toISOString().split('T')[0];
-                    dates.add(dateStr);
-                }
-            }
+            // Guardamos en el mapa general para UI
+            map[data.readingId] = true;
+            userCompletions.add(data.readingId);
         });
         setCompletionsMap(map);
         
-        // Racha
-        let currentStreak = 0;
-        const today = getLocalDate();
-        const yesterdayDate = new Date();
-        yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-        const yesterday = yesterdayDate.toISOString().split('T')[0]; 
+        // --- CALCULO DE RACHA ESTRICTO ---
+        // 1. Agrupar IDs de lecturas por fecha
+        const readingsByDate = {};
+        allReadings.forEach(r => {
+            if (!readingsByDate[r.date]) readingsByDate[r.date] = [];
+            readingsByDate[r.date].push(r.id);
+        });
 
-        let checkDate = new Date();
+        let currentStreak = 0;
+        let cursorDate = getLocalDate(); // Hoy
+
+        // Verificar si hoy está completo
+        let todaysReadings = readingsByDate[cursorDate];
+        let isTodayDone = false;
         
-        if (!dates.has(today)) {
-             if (!dates.has(yesterday)) { setStreak(0); return; }
-             checkDate = new Date(Date.now() - 86400000);
+        if (todaysReadings && todaysReadings.length > 0) {
+            isTodayDone = todaysReadings.every(id => userCompletions.has(id));
         }
-        while (true) {
-            const dateStr = checkDate.toISOString().split('T')[0];
-            if (dates.has(dateStr)) {
-                currentStreak++;
-                checkDate.setDate(checkDate.getDate() - 1);
-            } else {
-                break;
-            }
+
+        // Si hoy no está completo (o no hay lecturas), empezamos a chequear desde ayer para la racha
+        if (!isTodayDone) {
+            cursorDate = getPrevDateStr(cursorDate);
+        }
+
+        // Bucle hacia atrás
+        while(true) {
+             const dayReadingsIds = readingsByDate[cursorDate];
+             
+             // Si no hay lecturas asignadas ese día, ¿rompe racha? 
+             // Asumimos que sí para simplificar (se espera lectura diaria).
+             // O podemos saltarlo si no hubo tarea. Aquí asumimos que si no hubo tarea, rompemos (o fin de historial).
+             if (!dayReadingsIds || dayReadingsIds.length === 0) {
+                 break;
+             }
+
+             const isDayComplete = dayReadingsIds.every(id => userCompletions.has(id));
+             
+             if (isDayComplete) {
+                 currentStreak++;
+                 cursorDate = getPrevDateStr(cursorDate);
+             } else {
+                 break; // Racha rota
+             }
         }
         setStreak(currentStreak);
+
     });
   }, [activeUid, allReadings]);
 
-  // Admin: Leer Usuarios y TODOS los completados para estadísticas
+  // Admin: Leer Usuarios y TODOS los completados
   useEffect(() => {
     if (userData?.role !== 'admin') return;
     
@@ -388,9 +414,18 @@ export default function App() {
   // --- ACCIONES ---
   const toggleCompletion = async (readingId) => {
       if (!activeUid) return;
+      const isComplete = completionsMap[readingId];
+      
+      // CONFIRMACIÓN
+      const msg = isComplete 
+        ? "¿Deseas marcar esta lectura como pendiente? Se restará de tu progreso." 
+        : "Confirma que has leído y estudiado el material asignado.";
+      
+      if (!confirm(msg)) return;
+
       const id = `${activeUid}_${readingId}`;
       const ref = doc(db, 'artifacts', APP_ID, 'completions', id);
-      if (completionsMap[readingId]) await deleteDoc(ref);
+      if (isComplete) await deleteDoc(ref);
       else await setDoc(ref, { userId: activeUid, userName: userData.displayName, readingId, completedAt: serverTimestamp() });
   };
 
@@ -703,15 +738,10 @@ export default function App() {
                                                       {pendingReadings.length > 0 ? (
                                                           <ul className="space-y-1 pl-4 list-disc text-slate-600">
                                                               {pendingReadings.map(r => (
-                                                                  <li key={r.id}>
-                                                                      <span className="font-bold">{r.scripture || r.title}</span> 
-                                                                      <span className="text-slate-400 ml-1">({r.date})</span>
-                                                                  </li>
+                                                                  <li key={r.id}><span className="font-bold">{r.scripture || r.title}</span> <span className="text-slate-400 ml-1">({r.date})</span></li>
                                                               ))}
                                                           </ul>
-                                                      ) : (
-                                                          <p className="text-emerald-600 italic flex items-center gap-1"><CheckCircle size={12}/> ¡Está al día!</p>
-                                                      )}
+                                                      ) : <p className="text-emerald-600 italic flex items-center gap-1"><CheckCircle size={12}/> ¡Está al día!</p>}
                                                   </div>
                                               )}
                                           </div>
@@ -753,17 +783,13 @@ export default function App() {
                                                       <div className="flex-1">
                                                           <div className="font-bold text-emerald-600 mb-1">Completado por:</div>
                                                           <div className="flex flex-wrap gap-1">
-                                                              {allUsers.filter(u => readers.includes(u.uid)).map(u => (
-                                                                  <span key={u.id} className="bg-white border border-emerald-100 px-2 py-0.5 rounded text-emerald-700">{u.displayName}</span>
-                                                              ))}
+                                                              {allUsers.filter(u => readers.includes(u.uid)).map(u => <span key={u.id} className="bg-white border border-emerald-100 px-2 py-0.5 rounded text-emerald-700">{u.displayName}</span>)}
                                                           </div>
                                                       </div>
                                                       <div className="flex-1 border-l pl-4 border-slate-200">
                                                           <div className="font-bold text-red-500 mb-1">Pendiente:</div>
                                                           <div className="flex flex-wrap gap-1">
-                                                              {missingUsers.map(u => (
-                                                                  <span key={u.id} className="bg-white border border-red-100 px-2 py-0.5 rounded text-red-600">{u.displayName}</span>
-                                                              ))}
+                                                              {missingUsers.map(u => <span key={u.id} className="bg-white border border-red-100 px-2 py-0.5 rounded text-red-600">{u.displayName}</span>)}
                                                           </div>
                                                       </div>
                                                   </div>
