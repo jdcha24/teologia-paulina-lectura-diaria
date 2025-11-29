@@ -278,7 +278,7 @@ export default function App() {
     });
   }, [userData]);
 
-  // Leer Comentarios
+  // Leer Comentarios (CORREGIDO: Añadida dependencia allReadings)
   useEffect(() => {
     if (!userData?.isApproved || allReadings.length === 0) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'comments'), orderBy('createdAt', 'desc'));
@@ -308,82 +308,50 @@ export default function App() {
              });
         }
     });
-  }, [userData]); 
+  }, [userData, allReadings]); // <-- Importante: allReadings agregado para asegurar recarga
 
-  // Leer Progreso Personal y CALCULAR RACHA COMPLEJA
+  // Leer Progreso Personal
   useEffect(() => {
-    if (!activeUid || allReadings.length === 0) return; // Necesitamos lecturas para saber el total del día
-
+    if (!activeUid) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
     return onSnapshot(q, (snapshot) => {
         const map = {};
-        const completedReadingsByDate = {}; // { '2023-11-28': Set(readingId1, readingId2) }
+        const dates = new Set();
         
+        const validReadingIds = new Set(allReadings.map(r => r.id));
+
         snapshot.docs.forEach(doc => {
             const data = doc.data();
-            map[data.readingId] = true;
-            
-            // Buscar la lectura original para saber su fecha asignada
-            const reading = allReadings.find(r => r.id === data.readingId);
-            if (reading) {
-                if (!completedReadingsByDate[reading.date]) {
-                    completedReadingsByDate[reading.date] = new Set();
+            if (validReadingIds.has(data.readingId)) {
+                map[data.readingId] = true;
+                if (data.completedAt) {
+                    const dateStr = new Date(data.completedAt.seconds * 1000).toISOString().split('T')[0];
+                    dates.add(dateStr);
                 }
-                completedReadingsByDate[reading.date].add(reading.id);
             }
         });
         setCompletionsMap(map);
         
-        // CALCULO DE RACHA (STREAK) ESTRICTO
-        // 1. Agrupar lecturas totales por día
-        const totalReadingsByDate = {};
-        allReadings.forEach(r => {
-            if (!totalReadingsByDate[r.date]) totalReadingsByDate[r.date] = 0;
-            totalReadingsByDate[r.date]++;
-        });
-
-        // 2. Verificar qué días están 100% completados
-        const fullyCompletedDates = new Set();
-        Object.keys(totalReadingsByDate).forEach(date => {
-            const required = totalReadingsByDate[date];
-            const completed = completedReadingsByDate[date] ? completedReadingsByDate[date].size : 0;
-            if (completed >= required && required > 0) {
-                fullyCompletedDates.add(date);
-            }
-        });
-
-        // 3. Contar días consecutivos hacia atrás
+        // Racha
         let currentStreak = 0;
-        let checkDate = new Date(); // Hoy
-        
-        // Ajuste de zona horaria para comparación simple
-        const todayStr = checkDate.toISOString().split('T')[0];
-        const yesterday = new Date(checkDate);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().split('T')[0];
-        
-        // Si hoy no está completo, empezamos a chequear desde ayer
-        // Si hoy sí está completo, empezamos desde hoy
-        let pointerDate = new Date();
-        
-        if (!fullyCompletedDates.has(todayStr)) {
-            if (!fullyCompletedDates.has(yesterdayStr)) {
-                // Ni hoy ni ayer completados -> Racha rota o 0
-                setStreak(0);
-                return;
-            }
-            // Empezamos desde ayer
-            pointerDate = yesterday;
-        }
+        const today = getLocalDate();
+        const yesterdayDate = new Date();
+        yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+        const yesterday = yesterdayDate.toISOString().split('T')[0]; 
 
-        // Loop hacia atrás
+        let checkDate = new Date();
+        
+        if (!dates.has(today)) {
+             if (!dates.has(yesterday)) { setStreak(0); return; }
+             checkDate = new Date(Date.now() - 86400000);
+        }
         while (true) {
-            const dateStr = pointerDate.toISOString().split('T')[0];
-            if (fullyCompletedDates.has(dateStr)) {
+            const dateStr = checkDate.toISOString().split('T')[0];
+            if (dates.has(dateStr)) {
                 currentStreak++;
-                pointerDate.setDate(pointerDate.getDate() - 1);
+                checkDate.setDate(checkDate.getDate() - 1);
             } else {
-                break; // Se rompió la cadena
+                break;
             }
         }
         setStreak(currentStreak);
@@ -420,31 +388,19 @@ export default function App() {
   // --- ACCIONES ---
   const toggleCompletion = async (readingId) => {
       if (!activeUid) return;
-      
-      // CONFIRMACIÓN DE SEGURIDAD
-      const isComplete = completionsMap[readingId];
-      const message = isComplete 
-        ? "¿Deseas marcar esta lectura como pendiente? Perderás el progreso del día." 
-        : "Confirma que has leído y estudiado el material de hoy.";
-      
-      if (!confirm(message)) return;
-
       const id = `${activeUid}_${readingId}`;
       const ref = doc(db, 'artifacts', APP_ID, 'completions', id);
-      if (isComplete) await deleteDoc(ref);
+      if (completionsMap[readingId]) await deleteDoc(ref);
       else await setDoc(ref, { userId: activeUid, userName: userData.displayName, readingId, completedAt: serverTimestamp() });
   };
 
   const postComment = async (e, readingId) => {
       e.preventDefault();
       if (!commentText.trim()) return;
-      
-      // Optimistic update (opcional) o esperar snapshot
       await addDoc(collection(db, 'artifacts', APP_ID, 'comments'), {
           text: commentText, readingId, userId: activeUid, userName: userData.displayName, userPhoto: userData.photoURL, createdAt: serverTimestamp()
       });
       setCommentText('');
-      // No cerramos el acordeón para que el usuario vea su comentario aparecer
   };
 
   const createReading = async (e) => {
@@ -659,7 +615,7 @@ export default function App() {
                       </div>
                   </div>
               )}
-              
+
               {activeTab === 'users' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {allUsers.map(u => (
@@ -910,7 +866,6 @@ export default function App() {
                                           </button>
                                       </div>
                                       
-                                      {/* Comentarios Mini - MODIFICADO A BOTÓN GRANDE */}
                                       <div className="bg-slate-50/50 border-t p-2">
                                           <button 
                                               onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)}
@@ -935,7 +890,6 @@ export default function App() {
                                           )}
                                       </div>
 
-                                      {/* Área Expandible */}
                                       {showComments && (
                                           <div className="p-4 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top-1">
                                               {r.externalContent && (
