@@ -75,12 +75,14 @@ const BIBLE_STRUCTURE = {
 };
 const BIBLE_BOOKS_ORDER = Object.keys(BIBLE_STRUCTURE);
 
-// --- Configuración de Insignias ---
+// --- Configuración de Insignias (ACTUALIZADO) ---
 const BADGES = [
-  { days: 7, label: "Semana Constante", icon: Star, color: "text-yellow-500", bg: "bg-yellow-100" },
-  { days: 30, label: "Hábito Mensual", icon: Medal, color: "text-blue-500", bg: "bg-blue-100" },
-  { days: 180, label: "Guerrero de la Fe", icon: ShieldCheck, color: "text-purple-500", bg: "bg-purple-100" },
-  { days: 365, label: "Maestro de la Palabra", icon: Crown, color: "text-amber-500", bg: "bg-amber-100" },
+  { days: 7, label: "1 Semana", icon: Star, color: "text-yellow-500", bg: "bg-yellow-100" },
+  { days: 30, label: "1 Mes", icon: Medal, color: "text-blue-500", bg: "bg-blue-100" },
+  { days: 90, label: "3 Meses", icon: Shield, color: "text-indigo-500", bg: "bg-indigo-100" },
+  { days: 180, label: "6 Meses", icon: ShieldCheck, color: "text-purple-500", bg: "bg-purple-100" },
+  { days: 270, label: "9 Meses", icon: Award, color: "text-pink-500", bg: "bg-pink-100" },
+  { days: 365, label: "1 Año", icon: Crown, color: "text-amber-500", bg: "bg-amber-100" },
 ];
 
 // --- Componentes ---
@@ -305,12 +307,20 @@ export default function App() {
     return onSnapshot(q, (snapshot) => {
         const map = {};
         const dates = new Set();
+        
+        // Filtrar completions para solo lecturas que existen actualmente
+        // Esto soluciona el punto 1: Si se borra la lectura, no cuenta.
+        const validReadingIds = new Set(allReadings.map(r => r.id));
+
         snapshot.docs.forEach(doc => {
             const data = doc.data();
-            map[data.readingId] = true;
-            if (data.completedAt) {
-                const dateStr = new Date(data.completedAt.seconds * 1000).toISOString().split('T')[0];
-                dates.add(dateStr);
+            // Solo contar si la lectura aún existe
+            if (validReadingIds.has(data.readingId)) {
+                map[data.readingId] = true;
+                if (data.completedAt) {
+                    const dateStr = new Date(data.completedAt.seconds * 1000).toISOString().split('T')[0];
+                    dates.add(dateStr);
+                }
             }
         });
         setCompletionsMap(map);
@@ -336,7 +346,7 @@ export default function App() {
         }
         setStreak(currentStreak);
     });
-  }, [activeUid]);
+  }, [activeUid, allReadings]); // Añadido allReadings a dependencias para recalcular si se borran
 
   // Admin: Leer Usuarios y TODOS los completados para estadísticas
   useEffect(() => {
@@ -595,7 +605,7 @@ export default function App() {
                       </div>
                   </div>
               )}
-              
+
               {activeTab === 'users' && (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {allUsers.map(u => (
@@ -622,13 +632,15 @@ export default function App() {
 
               {activeTab === 'stats' && (
                   <div className="space-y-6">
+                      {/* Resumen */}
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                           <Card className="p-4 text-center bg-sky-50 border-sky-100">
                              <div className="text-2xl font-bold text-sky-600">{allReadings.length}</div>
                              <div className="text-xs uppercase text-sky-400 font-bold">Lecturas Totales</div>
                           </Card>
                           <Card className="p-4 text-center bg-emerald-50 border-emerald-100">
-                             <div className="text-2xl font-bold text-emerald-600">{allCompletions.length}</div>
+                             {/* Filtramos completions para que solo cuenten las de lecturas existentes */}
+                             <div className="text-2xl font-bold text-emerald-600">{allCompletions.filter(c => allReadings.find(r => r.id === c.readingId)).length}</div>
                              <div className="text-xs uppercase text-emerald-400 font-bold">Leídas (Total)</div>
                           </Card>
                           <Card className="p-4 text-center">
@@ -650,7 +662,12 @@ export default function App() {
                               </div>
                               <div className="divide-y max-h-96 overflow-y-auto">
                                   {allUsers.map(u => {
-                                      const userReadIds = allCompletions.filter(c => c.userId === u.uid).map(c => c.readingId);
+                                      // Solo contar lecturas que existen
+                                      const validReadingIds = new Set(allReadings.map(r => r.id));
+                                      const userReadIds = allCompletions
+                                        .filter(c => c.userId === u.uid && validReadingIds.has(c.readingId))
+                                        .map(c => c.readingId);
+                                      
                                       const pendingReadings = allReadings.filter(r => !userReadIds.includes(r.id));
                                       const isExpanded = expandedStatItem === u.id;
                                       
@@ -774,18 +791,18 @@ export default function App() {
                           <Flame size={14}/> {streak} días racha
                       </div>
                   </div>
-                  <div className="grid grid-cols-4 gap-2 text-center">
+                  <div className="grid grid-cols-6 gap-2 text-center">
                       {BADGES.map((badge, idx) => {
                           // Determinar si la insignia está desbloqueada
                           const isUnlocked = streak >= badge.days;
                           const Icon = badge.icon;
                           
                           return (
-                              <div key={idx} className={`flex flex-col items-center p-2 rounded-lg transition-all ${isUnlocked ? 'bg-white/10 opacity-100 scale-105' : 'opacity-40 grayscale'}`}>
-                                  <div className={`p-2 rounded-full mb-1 bg-white ${badge.color}`}>
-                                      <Icon size={20} />
+                              <div key={idx} className={`flex flex-col items-center p-1 rounded-lg transition-all ${isUnlocked ? 'bg-white/10 opacity-100 scale-105' : 'opacity-40 grayscale'}`}>
+                                  <div className={`p-1.5 rounded-full mb-1 bg-white ${badge.color}`}>
+                                      <Icon size={16} />
                                   </div>
-                                  <span className="text-[10px] font-bold leading-tight">{badge.label}</span>
+                                  <span className="text-[9px] font-bold leading-tight">{badge.label}</span>
                               </div>
                           )
                       })}
