@@ -95,8 +95,13 @@ const generateStaticPlan = () => {
     const year = new Date().getFullYear();
 
     for (let d = 0; d < totalDays; d++) {
-        const date = new Date(year, 0, d + 1);
-        const dateStr = date.toISOString().split('T')[0];
+        // Uso de fecha local para evitar problemas de zona horaria (ej. UTC vs Local)
+        const dateObj = new Date(year, 0, d + 1);
+        const y = dateObj.getFullYear();
+        const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const dayNum = String(dateObj.getDate()).padStart(2, '0');
+        const dateStr = `${y}-${m}-${dayNum}`;
+
         const nextIndex = Math.round((d + 1) * chaptersPerDay);
         const dailyChapters = allChapters.slice(currentChapterIndex, nextIndex);
         currentChapterIndex = nextIndex;
@@ -117,7 +122,12 @@ const generateStaticPlan = () => {
                 passage = `${first} - ${last}`;
             }
         }
-        plan.push({ id: dateStr, date: dateStr, corePassage: passage, displayDate: date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) });
+        plan.push({ 
+            id: dateStr, 
+            date: dateStr, 
+            corePassage: passage, 
+            displayDate: dateObj.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) 
+        });
     }
     return plan;
 };
@@ -800,17 +810,27 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                 let isLocked = isFuture || isAdminLocked;
                 
                 // Lógica de Bloqueo Secuencial Inteligente
-                let isPrevComplete = true;
+                let isPrevComplete = true; // Por defecto asumimos que el anterior está ok (caso primer día o jump-in)
+                
                 if (index > 0) {
                     const prevDay = userPlan[index - 1];
-                    // Si existe fecha de inicio y el día anterior es previo a esa fecha, ignoramos su estado (se asume completado)
-                    if (user.planStartDate && prevDay.date < user.planStartDate) {
-                        isPrevComplete = true;
+                    
+                    if (user.planStartDate) {
+                        // Si el usuario tiene fecha de inicio personalizada:
+                        // 1. Si el día ANTERIOR es menor a su fecha de inicio, se considera "completado/saltado" automáticamente.
+                        if (prevDay.date < user.planStartDate) {
+                            isPrevComplete = true;
+                        } else {
+                            // 2. Si el día ANTERIOR está dentro de su plan activo, verificamos si realmente lo completó.
+                            isPrevComplete = !!completionsMap[prevDay.id];
+                        }
                     } else {
+                        // Usuario normal (sin fecha de inicio personalizada): verificación estándar
                         isPrevComplete = !!completionsMap[prevDay.id];
                     }
                 }
 
+                // Aplicar bloqueo si el anterior no está "completo" (ya sea real o virtualmente)
                 if (!isPrevComplete) isLocked = true;
                 
                 // Ocultar futuro lejano en pendientes
