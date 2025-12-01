@@ -29,7 +29,7 @@ import {
   Shield, ShieldCheck, Bell, X, 
   AlertTriangle, FileText, Link as LinkIcon, Activity,
   Flame, Award, Crown, Star, Medal, Lock, Percent, MessageCircle, ToggleLeft, ToggleRight, Plus, Trash2,
-  AlertCircle, Settings
+  AlertCircle, Settings, History, Clock
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE ---
@@ -49,6 +49,7 @@ const db = getFirestore(app);
 
 const APP_ID = 'teologia-paulina-app';
 const LOGO_URL = "https://i.ibb.co/rD9fNMv/1764042450953.png";
+const FAVICON_URL = "https://i.postimg.cc/DwmFG9gG/Logo-TP.jpg";
 const YOUTUBE_CHANNEL = "https://youtube.com/@teologiapaulina?si=5gwOAmgbXHh1hbgc";
 
 // --- Estructura Bíblica ---
@@ -157,6 +158,7 @@ const Card = ({ children, className = '' }) => (
 // --- COMPONENTE ADMIN VIEW ---
 const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user, onBack }) => {
   const [activeTab, setActiveTab] = useState('reading');
+  const [planSubTab, setPlanSubTab] = useState('pending'); // 'pending' | 'history'
   const [statsMode, setStatsMode] = useState('byUser');
   const [editingDay, setEditingDay] = useState(null);
   const [expandedStatItem, setExpandedStatItem] = useState(null);
@@ -232,6 +234,17 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
   };
 
   const todayStr = getLocalDate();
+
+  // Filtrar el plan según la sub-pestaña activa
+  const visiblePlan = useMemo(() => {
+      if (planSubTab === 'history') {
+          // Histórico: Fechas anteriores a hoy, invertidas para ver lo más reciente primero
+          return staticPlan.filter(d => d.date < todayStr).reverse();
+      } else {
+          // Pendiente: Hoy en adelante
+          return staticPlan.filter(d => d.date >= todayStr);
+      }
+  }, [staticPlan, planSubTab, todayStr]);
 
   return (
     <div className="max-w-7xl mx-auto p-4 space-y-6">
@@ -336,56 +349,80 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                 </div>
 
                 <div className="lg:col-span-2 space-y-3">
-                    <h3 className="font-bold text-slate-700 flex justify-between items-center">
-                        <span>Calendario Anual</span>
-                        <span className="text-xs bg-sky-100 text-sky-700 px-2 py-1 rounded">365 Días</span>
-                    </h3>
+                    <div className="flex justify-between items-center">
+                        <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                            <span>Calendario Anual</span>
+                            <span className="text-xs bg-sky-100 text-sky-700 px-2 py-1 rounded">365 Días</span>
+                        </h3>
+                        {/* SUB-TABS PENDIENTE/HISTÓRICO */}
+                        <div className="flex bg-slate-100 rounded-lg p-1">
+                            <button 
+                                onClick={() => setPlanSubTab('pending')}
+                                className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded-md transition-all ${planSubTab === 'pending' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-500'}`}
+                            >
+                                <Clock size={12}/> Pendiente
+                            </button>
+                            <button 
+                                onClick={() => setPlanSubTab('history')}
+                                className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded-md transition-all ${planSubTab === 'history' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500'}`}
+                            >
+                                <History size={12}/> Histórico
+                            </button>
+                        </div>
+                    </div>
+
                     <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
                         <div className="max-h-[600px] overflow-y-auto divide-y">
-                            {staticPlan.map(day => {
-                                const content = dailyContentMap[day.id] || {};
-                                const isEnabled = content.isEnabled;
-                                const extrasCount = content.extraReadings?.length || 0;
-                                const isPast = day.date < todayStr;
+                            {visiblePlan.length === 0 ? (
+                                <div className="p-8 text-center text-slate-400 text-sm italic">
+                                    No hay días en esta vista.
+                                </div>
+                            ) : (
+                                visiblePlan.map(day => {
+                                    const content = dailyContentMap[day.id] || {};
+                                    const isEnabled = content.isEnabled;
+                                    const extrasCount = content.extraReadings?.length || 0;
+                                    const isPast = day.date < todayStr;
 
-                                return (
-                                    <div key={day.id} className={`p-3 flex items-center justify-between hover:bg-slate-50 transition-colors ${editingDay?.id === day.id ? 'bg-sky-50 border-l-4 border-sky-500' : ''}`}>
-                                        <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span className="text-xs font-bold text-slate-500 w-12">{day.displayDate}</span>
-                                                {isPast ? (
-                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">HISTÓRICO</span> 
-                                                ) : (
-                                                    isEnabled ? 
-                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700"><CheckCircle size={10} className="mr-1"/> ACTIVO</span> 
-                                                    : 
-                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-500"><Lock size={10} className="mr-1"/> INACTIVO</span>
-                                                )}
+                                    return (
+                                        <div key={day.id} className={`p-3 flex items-center justify-between hover:bg-slate-50 transition-colors ${editingDay?.id === day.id ? 'bg-sky-50 border-l-4 border-sky-500' : ''}`}>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className="text-xs font-bold text-slate-500 w-12">{day.displayDate}</span>
+                                                    {isPast ? (
+                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">HISTÓRICO</span> 
+                                                    ) : (
+                                                        isEnabled ? 
+                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700"><CheckCircle size={10} className="mr-1"/> ACTIVO</span> 
+                                                        : 
+                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-500"><Lock size={10} className="mr-1"/> INACTIVO</span>
+                                                    )}
+                                                </div>
+                                                <div className="font-bold text-slate-800 text-sm">{day.corePassage}</div>
+                                                <div className="flex gap-2 mt-1">
+                                                    {content.observation && <span className="text-[10px] bg-sky-50 text-sky-600 px-1 rounded border border-sky-100">Comentario</span>}
+                                                    {extrasCount > 0 && <span className="text-[10px] bg-amber-50 text-amber-600 px-1 rounded border border-amber-100">+{extrasCount} Extras</span>}
+                                                </div>
                                             </div>
-                                            <div className="font-bold text-slate-800 text-sm">{day.corePassage}</div>
-                                            <div className="flex gap-2 mt-1">
-                                                {content.observation && <span className="text-[10px] bg-sky-50 text-sky-600 px-1 rounded border border-sky-100">Comentario</span>}
-                                                {extrasCount > 0 && <span className="text-[10px] bg-amber-50 text-amber-600 px-1 rounded border border-amber-100">+{extrasCount} Extras</span>}
+                                            <div className="flex items-center gap-2">
+                                                <button 
+                                                    onClick={() => toggleDayEnabled(day, isEnabled)}
+                                                    disabled={isPast}
+                                                    className={`p-2 rounded hover:bg-slate-200 ${isPast ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEnabled ? 'text-emerald-500' : 'text-red-500')}`}
+                                                >
+                                                    {isEnabled ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}
+                                                </button>
+                                                <button 
+                                                    onClick={() => startEditing(day)}
+                                                    className="p-2 text-sky-500 hover:bg-sky-50 rounded"
+                                                >
+                                                    <Edit3 size={18}/>
+                                                </button>
                                             </div>
                                         </div>
-                                        <div className="flex items-center gap-2">
-                                            <button 
-                                                onClick={() => toggleDayEnabled(day, isEnabled)}
-                                                disabled={isPast}
-                                                className={`p-2 rounded hover:bg-slate-200 ${isPast ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEnabled ? 'text-emerald-500' : 'text-red-500')}`}
-                                            >
-                                                {isEnabled ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}
-                                            </button>
-                                            <button 
-                                                onClick={() => startEditing(day)}
-                                                className="p-2 text-sky-500 hover:bg-sky-50 rounded"
-                                            >
-                                                <Edit3 size={18}/>
-                                            </button>
-                                        </div>
-                                    </div>
-                                );
-                            })}
+                                    );
+                                })
+                            )}
                         </div>
                     </div>
                 </div>
@@ -904,6 +941,15 @@ export default function App() {
       if (!currentUser) { setLoading(false); setUserData(null); }
     });
     return () => unsubscribe();
+  }, []);
+
+  // FAVICON INJECTION
+  useEffect(() => {
+    const link = document.querySelector("link[rel*='icon']") || document.createElement('link');
+    link.type = 'image/jpeg';
+    link.rel = 'icon';
+    link.href = FAVICON_URL;
+    document.getElementsByTagName('head')[0].appendChild(link);
   }, []);
 
   // PROFILE
