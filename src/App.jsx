@@ -29,7 +29,7 @@ import {
   BarChart2, Edit3, ChevronDown, Youtube, ScrollText, 
   Shield, ShieldCheck, Bell, X, 
   AlertTriangle, FileText, Link as LinkIcon, Activity,
-  Flame, Award, Crown, Star, Medal, Lock, Percent
+  Flame, Award, Crown, Star, Medal, Lock, Percent, MessageCircle
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE ---
