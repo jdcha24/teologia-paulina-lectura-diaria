@@ -798,39 +798,41 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                 const isFuture = readingDate > todayDate;
                 const prevDayId = index > 0 ? userPlan[index-1].id : null;
                 const isSeqLocked = prevDayId && !completionsMap[prevDayId];
-                const isAdminLocked = !day.isEnabled;
                 
-                // El bloqueo lógico (candado) sigue aplicando aunque sea un "late joiner" si intenta saltar en el futuro
-                // Pero si está en el pasado (histórico habilitado), no debería bloquearse por "secuencia" si está antes de su fecha de inicio...
-                // Simplificación: Mantener bloqueo secuencial estricto PARA LO QUE VE.
-                // Si ocultamos lo anterior, el 'prevDayId' visible es el anterior visible?
-                // No, el bloqueo secuencial en un plan anual suele ser sobre el día inmediatamente anterior del calendario.
-                // Si ocultamos los días viejos, el usuario verá el primer día de "su plan". Ese primer día debería estar desbloqueado.
+                // --- LÓGICA DE BLOQUEO ACTUALIZADA ---
                 
-                let isLocked = isFuture || isAdminLocked;
+                // 1. Visibilidad Base: Habilitado por Admin, O es Hoy, O es Pasado.
+                const isToday = day.date === todayStr;
+                const isPast = day.date < todayStr;
+                const isEffectivelyEnabled = day.isEnabled || isPast || isToday;
                 
-                // Lógica de Bloqueo Secuencial Inteligente
-                let isPrevComplete = true; // Por defecto asumimos que el anterior está ok (caso primer día o jump-in)
+                // 2. Candado Admin (si no está habilitado/pasado/hoy, es futuro cerrado)
+                const isAdminLocked = !isEffectivelyEnabled;
+
+                // 3. Bloqueo Secuencial Inteligente (depende de fecha de inicio)
+                let isPrevComplete = true; 
                 
                 if (index > 0) {
                     const prevDay = userPlan[index - 1];
                     
                     if (user.planStartDate) {
                         // Si el usuario tiene fecha de inicio personalizada:
-                        // 1. Si el día ANTERIOR es menor a su fecha de inicio, se considera "completado/saltado" automáticamente.
+                        // A. Si el día ANTERIOR es menor a su fecha de inicio, se considera "completado/saltado" automáticamente.
                         if (prevDay.date < user.planStartDate) {
                             isPrevComplete = true;
                         } else {
-                            // 2. Si el día ANTERIOR está dentro de su plan activo, verificamos si realmente lo completó.
+                            // B. Si el día ANTERIOR está dentro de su plan activo, verificamos si realmente lo completó.
                             isPrevComplete = !!completionsMap[prevDay.id];
                         }
                     } else {
-                        // Usuario normal (sin fecha de inicio personalizada): verificación estándar
+                        // Usuario normal: verificación estándar
                         isPrevComplete = !!completionsMap[prevDay.id];
                     }
                 }
 
-                // Aplicar bloqueo si el anterior no está "completo" (ya sea real o virtualmente)
+                // Estado final del candado
+                // Está bloqueado SI: (Es futuro Y no habilitado) O (Admin lo cerró) O (No completó anterior)
+                let isLocked = isAdminLocked;
                 if (!isPrevComplete) isLocked = true;
                 
                 // Ocultar futuro lejano en pendientes
