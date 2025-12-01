@@ -247,7 +247,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
   // Filtrar el plan según la sub-pestaña activa
   const visiblePlan = useMemo(() => {
       if (planSubTab === 'history') {
-          // Histórico: Fechas anteriores a hoy, invertidas para ver lo más reciente primero
+          // Histórico: Fechas anteriores a hoy, invertidas
           return staticPlan.filter(d => d.date < todayStr).reverse();
       } else {
           // Pendiente: Hoy en adelante
@@ -338,7 +338,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                 </div>
                                 <div className="text-center text-xs font-bold uppercase tracking-wide">
                                     {editingDay.date < todayStr ? (
-                                        <span className="text-slate-500">Histórico (Siempre Visible)</span>
+                                        <span className="text-emerald-600">Visible (Automático por Fecha)</span>
                                     ) : (
                                         editForm.isEnabled ? <span className="text-emerald-600">Visible para Usuarios</span> : <span className="text-red-500">Oculto / Bloqueado</span>
                                     )}
@@ -392,6 +392,10 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                     const isEnabled = content.isEnabled;
                                     const extrasCount = content.extraReadings?.length || 0;
                                     const isPast = day.date < todayStr;
+                                    const isToday = day.date === todayStr;
+                                    
+                                    // Visualmente activo si está habilitado O si es pasado/hoy (regla de oro)
+                                    const isEffectivelyActive = isEnabled || isPast || isToday;
 
                                     return (
                                         <div key={day.id} className={`p-3 flex items-center justify-between hover:bg-slate-50 transition-colors ${editingDay?.id === day.id ? 'bg-sky-50 border-l-4 border-sky-500' : ''}`}>
@@ -401,7 +405,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                                     {isPast ? (
                                                         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">HISTÓRICO</span> 
                                                     ) : (
-                                                        isEnabled ? 
+                                                        isEffectivelyActive ? 
                                                         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700"><CheckCircle size={10} className="mr-1"/> ACTIVO</span> 
                                                         : 
                                                         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-500"><Lock size={10} className="mr-1"/> INACTIVO</span>
@@ -424,9 +428,9 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                                 <button 
                                                     onClick={() => toggleDayEnabled(day, isEnabled)}
                                                     disabled={isPast}
-                                                    className={`p-2 rounded hover:bg-slate-200 ${isPast ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEnabled ? 'text-emerald-500' : 'text-red-500')}`}
+                                                    className={`p-2 rounded hover:bg-slate-200 ${isPast ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEffectivelyActive ? 'text-emerald-500' : 'text-red-500')}`}
                                                 >
-                                                    {isEnabled ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}
+                                                    {isEffectivelyActive ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}
                                                 </button>
                                                 <button 
                                                     onClick={() => startEditing(day)}
