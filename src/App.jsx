@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -21,15 +21,14 @@ import {
   onSnapshot, 
   updateDoc, 
   serverTimestamp, 
-  deleteDoc,
-  writeBatch 
+  deleteDoc
 } from 'firebase/firestore';
 import { 
   BookOpen, CheckCircle, MessageSquare, Users, LogOut, Calendar, Send, Loader2, 
   BarChart2, Edit3, ChevronDown, Youtube, ScrollText, 
   Shield, ShieldCheck, Bell, X, 
   AlertTriangle, FileText, Link as LinkIcon, Activity,
-  Flame, Award, Crown, Star, Medal, Lock, Percent, MessageCircle
+  Flame, Award, Crown, Star, Medal, Lock, Percent, MessageCircle, ToggleLeft, ToggleRight
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE ---
@@ -55,7 +54,7 @@ const LOGO_URL = "https://i.ibb.co/rD9fNMv/1764042450953.png";
 const YOUTUBE_CHANNEL = "https://youtube.com/@teologiapaulina?si=5gwOAmgbXHh1hbgc";
 const APP_URL = "https://teologia-paulina-app.vercel.app"; 
 
-// --- Estructura Bíblica ---
+// --- Estructura Bíblica y Lógica de Plan ---
 const BIBLE_STRUCTURE = {
   "Génesis": 50, "Éxodo": 40, "Levítico": 27, "Números": 36, "Deuteronomio": 34,
   "Josué": 24, "Jueces": 21, "Rut": 4, "1 Samuel": 31, "2 Samuel": 24,
@@ -72,7 +71,67 @@ const BIBLE_STRUCTURE = {
   "Santiago": 5, "1 Pedro": 5, "2 Pedro": 3, "1 Juan": 5, "2 Juan": 1,
   "3 Juan": 1, "Judas": 1, "Apocalipsis": 22
 };
-const BIBLE_BOOKS_ORDER = Object.keys(BIBLE_STRUCTURE);
+
+// Generar Plan Anual en Memoria (Estático)
+const generateStaticPlan = () => {
+    const plan = [];
+    const books = Object.entries(BIBLE_STRUCTURE);
+    let allChapters = [];
+    
+    // Aplanar todos los capítulos: ["Génesis 1", "Génesis 2"...]
+    books.forEach(([book, chapters]) => {
+        for(let i=1; i<=chapters; i++) {
+            allChapters.push(`${book} ${i}`);
+        }
+    });
+
+    // Dividir en 365 días
+    const totalChapters = allChapters.length; // 1189
+    const totalDays = 365;
+    const chaptersPerDay = totalChapters / totalDays; // ~3.25
+    
+    let currentChapterIndex = 0;
+    const year = new Date().getFullYear();
+
+    for (let d = 0; d < totalDays; d++) {
+        // Calcular fecha
+        const date = new Date(year, 0, d + 1); // Enero 1 + d días
+        const dateStr = date.toISOString().split('T')[0];
+        
+        // Calcular fin del rango para hoy
+        const nextIndex = Math.round((d + 1) * chaptersPerDay);
+        const dailyChapters = allChapters.slice(currentChapterIndex, nextIndex);
+        currentChapterIndex = nextIndex;
+
+        // Formatear texto de lectura (Ej: "Génesis 1 - Génesis 3")
+        let passage = "";
+        if (dailyChapters.length > 0) {
+            const first = dailyChapters[0];
+            const last = dailyChapters[dailyChapters.length - 1];
+            
+            // Simplificar si es el mismo libro
+            const firstBook = first.split(' ').slice(0, -1).join(' ');
+            const lastBook = last.split(' ').slice(0, -1).join(' ');
+            
+            if (first === last) passage = first;
+            else if (firstBook === lastBook) {
+                const firstChap = first.split(' ').pop();
+                const lastChap = last.split(' ').pop();
+                passage = `${firstBook} ${firstChap}-${lastChap}`;
+            } else {
+                passage = `${first} - ${last}`;
+            }
+        }
+
+        plan.push({
+            id: dateStr, // ID es la fecha
+            date: dateStr,
+            corePassage: passage,
+            displayDate: date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })
+        });
+    }
+    return plan;
+};
 
 // --- Configuración de Insignias ---
 const BADGES = [
@@ -119,17 +178,6 @@ const Card = ({ children, className = '' }) => (
   <div className={`bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden ${className}`}>{children}</div>
 );
 
-const Badge = ({ children, color = 'gray' }) => {
-  const colors = {
-    green: 'bg-emerald-50 text-emerald-700 border border-emerald-100',
-    blue: 'bg-sky-50 text-sky-700 border border-sky-100',
-    amber: 'bg-amber-50 text-amber-700 border border-amber-100',
-    red: 'bg-red-50 text-red-600 border border-red-100',
-    gray: 'bg-gray-50 text-gray-600 border border-gray-100'
-  };
-  return <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide ${colors[color]}`}>{children}</span>
-};
-
 // --- App Principal ---
 export default function App() {
   const [user, setUser] = useState(null);
@@ -139,7 +187,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('reading'); 
 
   // Datos
-  const [allReadings, setAllReadings] = useState([]);
+  const [staticPlan] = useState(generateStaticPlan()); // El plan base 1-Ene a 31-Dic
+  const [dailyContentMap, setDailyContentMap] = useState({}); // Info extra agregada por admin (comments, extra links, enabled status)
+  
   const [allUsers, setAllUsers] = useState([]);
   const [allCompletions, setAllCompletions] = useState([]); 
   const [completionsMap, setCompletionsMap] = useState({});
@@ -156,15 +206,13 @@ export default function App() {
   const [statsMode, setStatsMode] = useState('byUser'); 
   const [expandedStatItem, setExpandedStatItem] = useState(null);
 
-  // Inputs
+  // Inputs Admin
+  const [editingDay, setEditingDay] = useState(null); 
+  const [editForm, setEditForm] = useState({ observation: '', extraTitle: '', extraLink: '', isEnabled: false });
+
+  // Inputs Comentarios
   const [commentText, setCommentText] = useState('');
-  const [newReading, setNewReading] = useState({ 
-    type: 'bible', date: getLocalDate(), 
-    title: '', startBook: 'Romanos', startChapter: '1', endBook: 'Romanos', endChapter: '1', verses: '', 
-    externalLink: '', externalContent: '', observation: '' 
-  });
   const [activeReadingIdForComment, setActiveReadingIdForComment] = useState(null);
-  const [editingReading, setEditingReading] = useState(null); 
 
   // 1. Inicializar Auth
   useEffect(() => {
@@ -218,7 +266,7 @@ export default function App() {
       await checkAndCreateProfile(result.user, result.user.displayName || "Usuario Google");
     } catch (error) {
       console.error(error);
-      alert("Error al conectar. Verifica tu conexión o intenta más tarde.");
+      alert("Error al conectar.");
       setLoading(false);
     }
   };
@@ -261,25 +309,22 @@ export default function App() {
   // --- LÓGICA DE DATOS ---
   const activeUid = userData?.uid;
 
-  // Leer TODAS las Lecturas (Ordenadas por fecha ascendente para lógica secuencial)
+  // Leer Contenido Diario (Configurado por Admin)
   useEffect(() => {
     if (!userData?.isApproved) return;
-    const q = query(collection(db, 'artifacts', APP_ID, 'readings'));
+    const q = query(collection(db, 'artifacts', APP_ID, 'daily_content'));
     return onSnapshot(q, (snapshot) => {
-        const docs = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
-        // Orden estricto por fecha (necesario para la secuencia)
-        docs.sort((a,b) => {
-            if (a.date > b.date) return 1;
-            if (a.date < b.date) return -1;
-            return 0;
+        const map = {};
+        snapshot.docs.forEach(d => {
+            map[d.id] = d.data(); // ID es la fecha (YYYY-MM-DD)
         });
-        setAllReadings(docs);
+        setDailyContentMap(map);
     });
   }, [userData]);
 
-  // Comentarios
+  // Leer Comentarios
   useEffect(() => {
-    if (!userData?.isApproved || allReadings.length === 0) return;
+    if (!userData?.isApproved) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'comments'), orderBy('createdAt', 'desc'));
     return onSnapshot(q, (snapshot) => {
         const newMap = {};
@@ -290,11 +335,11 @@ export default function App() {
         });
         setCommentsMap(newMap);
     }, () => {});
-  }, [userData, allReadings]); 
+  }, [userData]); 
 
   // Progreso y Racha
   useEffect(() => {
-    if (!activeUid || allReadings.length === 0) return;
+    if (!activeUid) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
     
     return onSnapshot(q, (snapshot) => {
@@ -310,34 +355,20 @@ export default function App() {
         });
         setCompletionsMap(map);
 
-        // Calcular porcentaje anual (Asumimos meta de 365 días o total de lecturas si es mayor)
-        const totalGoal = Math.max(365, allReadings.length);
-        const percent = Math.min(100, Math.round((count / totalGoal) * 100));
+        // Progreso Anual (Sobre 365 días)
+        const percent = Math.min(100, Math.round((count / 365) * 100));
         setBibleProgress(percent);
         
-        // Racha
-        const readingsByDate = {};
-        allReadings.forEach(r => {
-            if (!readingsByDate[r.date]) readingsByDate[r.date] = [];
-            readingsByDate[r.date].push(r.id);
-        });
-
+        // Calculo de Racha Estricto
         let currentStreak = 0;
         let cursorDate = getLocalDate(); 
         
-        let todaysReadings = readingsByDate[cursorDate];
-        let isTodayDone = false;
-        if (todaysReadings && todaysReadings.length > 0) {
-            isTodayDone = todaysReadings.every(id => userCompletions.has(id));
-        }
-
+        // Verificar si hoy está completo
+        const isTodayDone = userCompletions.has(cursorDate);
         if (!isTodayDone) cursorDate = getPrevDateStr(cursorDate);
 
         while(true) {
-             const dayReadingsIds = readingsByDate[cursorDate];
-             if (!dayReadingsIds || dayReadingsIds.length === 0) break;
-             const isDayComplete = dayReadingsIds.every(id => userCompletions.has(id));
-             if (isDayComplete) {
+             if (userCompletions.has(cursorDate)) {
                  currentStreak++;
                  cursorDate = getPrevDateStr(cursorDate);
              } else {
@@ -346,7 +377,7 @@ export default function App() {
         }
         setStreak(currentStreak);
     });
-  }, [activeUid, allReadings]);
+  }, [activeUid]);
 
   // Admin Data
   useEffect(() => {
@@ -362,61 +393,50 @@ export default function App() {
 
   // --- ACCIONES ---
 
-  // Generador de Año Bíblico (Función Admin Potente)
-  const generateBibleYear = async () => {
-      if(!confirm("⚠️ ATENCIÓN: Esto generará 365 lecturas vacías (slots) para todo el año actual. \n\n¿Estás seguro de que quieres crear la estructura ahora?")) return;
+  // Admin: Guardar configuración de un día
+  const saveDayConfig = async (e) => {
+      e.preventDefault();
+      if (!editingDay) return;
       
-      setLoading(true);
-      const year = new Date().getFullYear();
-      const batchSize = 500; // Firebase limit
-      const batch = writeBatch(db);
+      const docRef = doc(db, 'artifacts', APP_ID, 'daily_content', editingDay.id);
+      await setDoc(docRef, {
+          observation: editForm.observation,
+          extraTitle: editForm.extraTitle,
+          extraLink: editForm.extraLink,
+          isEnabled: editForm.isEnabled,
+          updatedAt: serverTimestamp()
+      }, { merge: true });
       
-      let count = 0;
-      // Generar desde 1 de Enero hasta 31 de Diciembre
-      for (let m = 0; m < 12; m++) {
-          const daysInMonth = new Date(year, m + 1, 0).getDate();
-          for (let d = 1; d <= daysInMonth; d++) {
-              const monthStr = String(m + 1).padStart(2, '0');
-              const dayStr = String(d).padStart(2, '0');
-              const dateStr = `${year}-${monthStr}-${dayStr}`;
-
-              // Referencia para crear ID único basado en fecha para evitar duplicados
-              const docId = `bible_${dateStr}`; 
-              const docRef = doc(db, 'artifacts', APP_ID, 'readings', docId);
-              
-              batch.set(docRef, {
-                  type: 'bible',
-                  date: dateStr,
-                  title: `Lectura del ${d}/${m+1}`,
-                  scripture: "Lectura por definir", // Placeholder
-                  observation: "",
-                  createdBy: activeUid,
-                  createdAt: serverTimestamp()
-              }, { merge: true }); // Merge evita borrar si ya editaste algo ese día
-              count++;
-          }
-      }
-
-      await batch.commit();
-      setLoading(false);
-      alert(`¡Éxito! Se generaron/actualizaron ${count} días de lectura.`);
+      setEditingDay(null);
   };
 
-  const sendWhatsAppNotification = (reading) => {
-      const title = reading.scripture || reading.title || 'Nueva Lectura';
+  const toggleDayEnabled = async (dayId, currentStatus) => {
+      const docRef = doc(db, 'artifacts', APP_ID, 'daily_content', dayId);
+      await setDoc(docRef, { isEnabled: !currentStatus }, { merge: true });
+  };
+
+  const sendWhatsAppNotification = (day, content) => {
       const link = APP_URL || window.location.origin;
-      const message = `*Plan Bíblico Diario* 🕊️\n\n📅 *Fecha:* ${reading.date}\n📖 *Lectura:* ${title}\n\n${reading.observation ? `_"${reading.observation}"_` : ''}\n\n🔗 *Leer aquí:* ${link}`;
-      window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, '_blank');
+      let msg = `*Plan Bíblico Diario* 🕊️\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Lectura:* ${day.corePassage}`;
+      
+      if (content?.observation) msg += `\n\n💬 *Pastoral:* _"${content.observation}"_`;
+      if (content?.extraTitle) msg += `\n\n➕ *Extra:* ${content.extraTitle}`;
+      
+      msg += `\n\n🔗 *Leer aquí:* ${link}`;
+      window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   const toggleCompletion = async (readingId) => {
       if (!activeUid) return;
       const isComplete = completionsMap[readingId];
+      const id = `${activeUid}_${readingId}`;
+      const docRef = doc(db, 'artifacts', APP_ID, 'completions', id);
+
       if (isComplete) {
           if (!confirm("¿Desmarcar lectura? Restará progreso.")) return;
-          await deleteDoc(doc(db, 'artifacts', APP_ID, 'completions', `${activeUid}_${readingId}`));
+          await deleteDoc(docRef);
       } else {
-          await setDoc(doc(db, 'artifacts', APP_ID, 'completions', `${activeUid}_${readingId}`), { 
+          await setDoc(docRef, { 
               userId: activeUid, userName: userData.displayName, readingId, completedAt: serverTimestamp() 
           });
       }
@@ -431,54 +451,9 @@ export default function App() {
       setCommentText('');
   };
 
-  const createReading = async (e) => {
-      e.preventDefault();
-      const date = newReading.date || getLocalDate();
-      let data = { 
-          type: newReading.type, date, title: newReading.title || '', observation: newReading.observation, createdBy: activeUid, createdAt: serverTimestamp() 
-      };
-
-      if (newReading.type === 'bible') {
-          let scripture = `${newReading.startBook} ${newReading.startChapter}`;
-          if (newReading.startBook !== newReading.endBook || newReading.startChapter !== newReading.endChapter) {
-              scripture += (newReading.startBook === newReading.endBook) ? `-${newReading.endChapter}` : ` - ${newReading.endBook} ${newReading.endChapter}`;
-          }
-          if (newReading.verses) scripture += `:${newReading.verses}`;
-          data.scripture = scripture;
-      } else {
-          data.scripture = newReading.title || "Lectura Extra";
-          data.externalLink = newReading.externalLink;
-          data.externalContent = newReading.externalContent;
-      }
-      await addDoc(collection(db, 'artifacts', APP_ID, 'readings'), data);
-      setNewReading({ ...newReading, title: '', observation: '' });
-      alert("Lectura agregada (adicional al plan anual).");
-  };
-
-  const updateReading = async (e) => {
-      e.preventDefault();
-      if (!editingReading) return;
-      const ref = doc(db, 'artifacts', APP_ID, 'readings', editingReading.id);
-      await updateDoc(ref, {
-          title: editingReading.title,
-          scripture: editingReading.scripture,
-          observation: editingReading.observation,
-          date: editingReading.date,
-          externalLink: editingReading.externalLink || ''
-      });
-      setEditingReading(null);
-      alert("Lectura actualizada");
-  };
-
-  const deleteReading = async (id) => {
-      if(confirm('¿Borrar lectura?')) await deleteDoc(doc(db, 'artifacts', APP_ID, 'readings', id));
-  };
-
   const updateUserStatus = async (uid, field, value) => {
       await updateDoc(doc(db, 'artifacts', APP_ID, 'users', uid), { [field]: value });
   };
-
-  const getChapters = (book) => Array.from({length: BIBLE_STRUCTURE[book]||50}, (_,i) => i+1);
 
   // --- RENDERS ---
 
@@ -490,7 +465,7 @@ export default function App() {
         <div className="text-center mb-8">
           <div className="w-24 h-24 mx-auto mb-4 bg-white rounded-full p-2"><img src={LOGO_URL} className="w-full h-full object-contain"/></div>
           <h1 className="text-2xl font-bold text-slate-800 font-serif">Teología Paulina</h1>
-          <p className="text-sky-600 font-bold uppercase text-xs mt-2">Plan Bíblico Anual</p>
+          <p className="text-sky-600 font-bold uppercase text-xs mt-2">Biblia en un Año</p>
         </div>
         <Button onClick={handleGoogleLogin} variant="google" className="w-full py-3 flex gap-2 justify-center">
              <span className="font-bold">Ingresar con Google</span>
@@ -539,88 +514,138 @@ export default function App() {
           <Header/>
           <main className="max-w-7xl mx-auto p-4 space-y-6">
               <div className="flex gap-2 border-b pb-2 overflow-x-auto">
-                  <Button variant={activeTab==='reading'?'primary':'ghost'} onClick={()=>setActiveTab('reading')} className="text-sm"><BookOpen size={16} className="mr-2"/> Plan & Lecturas</Button>
+                  <Button variant={activeTab==='reading'?'primary':'ghost'} onClick={()=>setActiveTab('reading')} className="text-sm"><BookOpen size={16} className="mr-2"/> Planificación</Button>
                   <Button variant={activeTab==='users'?'primary':'ghost'} onClick={()=>setActiveTab('users')} className="text-sm"><Users size={16} className="mr-2"/> Usuarios</Button>
                   <Button variant={activeTab==='stats'?'primary':'ghost'} onClick={()=>setActiveTab('stats')} className="text-sm"><BarChart2 size={16} className="mr-2"/> Progreso</Button>
               </div>
 
               {activeTab === 'reading' && (
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      <Card className="p-6 h-fit">
-                          <h2 className="font-bold text-lg mb-4 text-slate-800">Gestión de Contenido</h2>
-                          
-                          <div className="bg-amber-50 border border-amber-100 p-4 rounded-lg mb-6">
-                              <h3 className="font-bold text-amber-800 text-sm mb-2">⚡ Acciones Rápidas</h3>
-                              <Button onClick={generateBibleYear} variant="secondary" className="w-full text-xs border-amber-200 text-amber-700 hover:bg-amber-100">
-                                  <Calendar className="mr-2" size={16}/> Generar Estructura Año Completo
-                              </Button>
-                              <p className="text-[10px] text-amber-600/70 mt-2 leading-tight">Crea espacios vacíos para cada día del año actual para que solo tengas que editarlos.</p>
-                          </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                      {/* COLUMNA IZQUIERDA: EDITOR */}
+                      <div className="lg:col-span-1">
+                          <Card className="p-5 sticky top-24">
+                              <h2 className="font-bold text-lg mb-4 text-slate-800 flex items-center gap-2">
+                                  <Edit3 size={20} className="text-sky-600"/> 
+                                  {editingDay ? `Editando: ${editingDay.displayDate}` : 'Selecciona un día'}
+                              </h2>
+                              
+                              {editingDay ? (
+                                  <form onSubmit={saveDayConfig} className="space-y-4">
+                                      <div className="bg-sky-50 p-3 rounded text-sm mb-4 border border-sky-100">
+                                          <div className="text-xs font-bold text-sky-600 uppercase mb-1">Lectura Bíblica (Fija)</div>
+                                          <div className="font-bold text-slate-800 text-lg">{editingDay.corePassage}</div>
+                                      </div>
 
-                          <h3 className="font-bold text-slate-700 text-sm mb-2">Agregar Lectura Extra / Manual</h3>
-                          <form onSubmit={createReading} className="space-y-4 border-t pt-4">
-                              <div className="grid grid-cols-2 gap-2">
-                                  <input type="date" className="p-2 border rounded text-sm" value={newReading.date} onChange={e=>setNewReading({...newReading, date: e.target.value})}/>
-                                  <select className="p-2 border rounded text-sm" value={newReading.type} onChange={e=>setNewReading({...newReading, type: e.target.value})}>
-                                      <option value="bible">Biblia</option>
-                                      <option value="external">Externo</option>
-                                  </select>
-                              </div>
-                              {newReading.type === 'bible' ? (
-                                  <div className="space-y-2 bg-sky-50 p-3 rounded">
-                                      <div className="flex gap-1"><select className="flex-1 p-2 border rounded text-sm" value={newReading.startBook} onChange={e=>setNewReading({...newReading, startBook:e.target.value, endBook:e.target.value})}>{BIBLE_BOOKS_ORDER.map(b=><option key={b}>{b}</option>)}</select><select className="w-16 p-2 border rounded text-sm" value={newReading.startChapter} onChange={e=>setNewReading({...newReading, startChapter:e.target.value})}>{getChapters(newReading.startBook).map(n=><option key={n}>{n}</option>)}</select></div>
-                                      <div className="flex gap-1"><select className="flex-1 p-2 border rounded text-sm" value={newReading.endBook} onChange={e=>setNewReading({...newReading, endBook:e.target.value})}>{BIBLE_BOOKS_ORDER.map(b=><option key={b}>{b}</option>)}</select><select className="w-16 p-2 border rounded text-sm" value={newReading.endChapter} onChange={e=>setNewReading({...newReading, endChapter:e.target.value})}>{getChapters(newReading.endBook).map(n=><option key={n}>{n}</option>)}</select></div>
-                                      <input className="w-full p-2 border rounded text-sm" placeholder="Versículos" value={newReading.verses} onChange={e=>setNewReading({...newReading, verses:e.target.value})}/>
-                                  </div>
+                                      <div>
+                                          <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Comentario Pastoral</label>
+                                          <textarea 
+                                              className="w-full p-2 border rounded text-sm h-24" 
+                                              placeholder="Escribe un comentario..."
+                                              value={editForm.observation}
+                                              onChange={e=>setEditForm({...editForm, observation:e.target.value})}
+                                          />
+                                      </div>
+
+                                      <div className="p-3 bg-amber-50 rounded border border-amber-100">
+                                          <label className="text-xs font-bold text-amber-600 uppercase block mb-2">Lectura Adicional (Opcional)</label>
+                                          <input 
+                                              className="w-full p-2 border rounded text-sm mb-2" 
+                                              placeholder="Título (Ej: Salmo Extra)"
+                                              value={editForm.extraTitle}
+                                              onChange={e=>setEditForm({...editForm, extraTitle:e.target.value})}
+                                          />
+                                          <input 
+                                              className="w-full p-2 border rounded text-sm" 
+                                              placeholder="Enlace Externo (URL)"
+                                              value={editForm.extraLink}
+                                              onChange={e=>setEditForm({...editForm, extraLink:e.target.value})}
+                                          />
+                                      </div>
+
+                                      <div className="flex items-center gap-2 py-2 border-t border-b">
+                                          <button 
+                                              type="button" 
+                                              onClick={()=>setEditForm({...editForm, isEnabled: !editForm.isEnabled})}
+                                              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${editForm.isEnabled ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                                          >
+                                              <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${editForm.isEnabled ? 'translate-x-6' : 'translate-x-1'}`}/>
+                                          </button>
+                                          <span className="text-sm font-bold text-slate-700">{editForm.isEnabled ? 'Habilitado para Usuarios' : 'Deshabilitado (Oculto)'}</span>
+                                      </div>
+
+                                      <div className="flex gap-2">
+                                          <Button type="button" variant="secondary" onClick={()=>setEditingDay(null)} className="flex-1">Cancelar</Button>
+                                          <Button type="submit" variant="primary" className="flex-1">Guardar</Button>
+                                      </div>
+                                  </form>
                               ) : (
-                                  <div className="space-y-2 bg-amber-50 p-3 rounded">
-                                      <input className="w-full p-2 border rounded text-sm" placeholder="Título *" required value={newReading.title} onChange={e=>setNewReading({...newReading, title:e.target.value})}/>
-                                      <input className="w-full p-2 border rounded text-sm" placeholder="Link URL" value={newReading.externalLink} onChange={e=>setNewReading({...newReading, externalLink:e.target.value})}/>
+                                  <div className="text-center py-10 text-slate-400 text-sm">
+                                      Haz clic en el icono <Edit3 size={14} className="inline"/> de la lista para configurar el contenido del día.
                                   </div>
                               )}
-                              <textarea className="w-full p-2 border rounded text-sm" placeholder="Comentario Pastoral" value={newReading.observation} onChange={e=>setNewReading({...newReading, observation:e.target.value})}/>
-                              <Button type="submit" variant="primary" className="w-full">Guardar Lectura</Button>
-                          </form>
-                      </Card>
+                          </Card>
+                      </div>
 
-                      <div className="space-y-3">
-                          <h3 className="font-bold text-slate-700">Agenda de Lecturas ({allReadings.length})</h3>
-                          <div className="max-h-[600px] overflow-y-auto space-y-2 pr-2">
-                              {/* Mostrar lecturas ordenadas, primero las más recientes para facilitar edición */}
-                              {[...allReadings].reverse().map(r => (
-                                  <div key={r.id} className={`bg-white p-3 rounded border flex justify-between items-start hover:shadow-sm ${r.scripture==='Lectura por definir' ? 'border-l-4 border-l-red-300' : 'border-l-4 border-l-emerald-400'}`}>
-                                      {editingReading?.id === r.id ? (
-                                          <form onSubmit={updateReading} className="w-full space-y-2">
-                                              <div className="font-bold text-sky-600 mb-2 text-xs">Editando: {r.date}</div>
-                                              <input className="w-full p-1 border rounded text-sm font-bold" value={editingReading.scripture} onChange={e=>setEditingReading({...editingReading, scripture:e.target.value})} placeholder="Ej: Génesis 1-3"/>
-                                              <input className="w-full p-1 border rounded text-sm" value={editingReading.title} onChange={e=>setEditingReading({...editingReading, title:e.target.value})} placeholder="Título / Tema"/>
-                                              {r.type === 'external' && <input className="w-full p-1 border rounded text-sm" value={editingReading.externalLink} onChange={e=>setEditingReading({...editingReading, externalLink:e.target.value})} placeholder="Link URL"/>}
-                                              <textarea className="w-full p-1 border rounded text-sm min-h-[80px]" value={editingReading.observation} onChange={e=>setEditingReading({...editingReading, observation:e.target.value})} placeholder="Comentario Pastoral"/>
-                                              <div className="flex gap-2 justify-end">
-                                                  <button type="button" onClick={()=>setEditingReading(null)} className="text-xs text-slate-500">Cancelar</button>
-                                                  <button type="submit" className="text-xs bg-sky-500 text-white px-3 py-1 rounded">Guardar</button>
-                                              </div>
-                                          </form>
-                                      ) : (
-                                          <>
-                                              <div className="flex-1 cursor-pointer" onClick={()=>setEditingReading(r)}>
-                                                  <div className="flex items-center gap-2">
-                                                      <span className="text-[10px] font-bold bg-slate-100 px-1 rounded text-slate-500">{r.date}</span>
-                                                      <span className={`font-bold text-sm ${r.scripture==='Lectura por definir'?'text-red-400':'text-slate-800'}`}>{r.scripture}</span>
+                      {/* COLUMNA DERECHA: LISTA PLAN */}
+                      <div className="lg:col-span-2 space-y-3">
+                          <h3 className="font-bold text-slate-700 flex justify-between items-center">
+                              <span>Calendario Anual</span>
+                              <span className="text-xs bg-sky-100 text-sky-700 px-2 py-1 rounded">365 Días</span>
+                          </h3>
+                          <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+                              <div className="max-h-[600px] overflow-y-auto divide-y">
+                                  {/* Mostrar días, revertido para ver los más recientes/futuros primero? O normal? Mejor normal para ver Enero primero o scroll al dia actual. 
+                                      Para simplificar admin, mostramos todo. Usaremos scrollIntoView en una versión pro.
+                                      Aquí invertimos para ver los últimos días arriba si es Diciembre, o mejor orden natural.
+                                      Orden natural es mejor para entender el flujo. */}
+                                  {staticPlan.map(day => {
+                                      const content = dailyContentMap[day.id] || {};
+                                      const isEnabled = content.isEnabled;
+
+                                      return (
+                                          <div key={day.id} className={`p-3 flex items-center justify-between hover:bg-slate-50 transition-colors ${editingDay?.id === day.id ? 'bg-sky-50 border-l-4 border-sky-500' : ''}`}>
+                                              <div className="flex-1 min-w-0">
+                                                  <div className="flex items-center gap-2 mb-1">
+                                                      <span className="text-xs font-bold text-slate-500 w-12">{day.displayDate}</span>
+                                                      {isEnabled ? 
+                                                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700"><CheckCircle size={10} className="mr-1"/> ACTIVO</span> 
+                                                          : 
+                                                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-400"><Lock size={10} className="mr-1"/> INACTIVO</span>
+                                                      }
                                                   </div>
-                                                  {r.observation ? 
-                                                     <div className="text-xs text-slate-600 italic mt-1 line-clamp-1">"{r.observation}"</div> 
-                                                     : <div className="text-[10px] text-slate-300 mt-1">Sin comentario</div>}
+                                                  <div className="font-bold text-slate-800 text-sm">{day.corePassage}</div>
+                                                  <div className="flex gap-2 mt-1">
+                                                      {content.observation && <span className="text-[10px] bg-sky-50 text-sky-600 px-1 rounded border border-sky-100">Tiene Comentario</span>}
+                                                      {content.extraTitle && <span className="text-[10px] bg-amber-50 text-amber-600 px-1 rounded border border-amber-100">+ Extra</span>}
+                                                  </div>
                                               </div>
-                                              <div className="flex gap-2 ml-2 items-center">
-                                                  <button onClick={() => sendWhatsAppNotification(r)} className="text-emerald-500 hover:bg-emerald-50 p-1 rounded"><MessageCircle size={16}/></button>
-                                                  <button onClick={()=>setEditingReading(r)} className="text-sky-500 hover:bg-sky-50 p-1 rounded"><Edit3 size={16}/></button>
-                                                  <button onClick={()=>deleteReading(r.id)} className="text-slate-300 hover:text-red-500 p-1 rounded"><X size={16}/></button>
+                                              <div className="flex items-center gap-2">
+                                                  <button 
+                                                      onClick={() => toggleDayEnabled(day.id, isEnabled)}
+                                                      className={`p-2 rounded hover:bg-slate-200 text-slate-400 ${isEnabled ? 'text-emerald-500' : ''}`}
+                                                      title={isEnabled ? "Deshabilitar" : "Habilitar"}
+                                                  >
+                                                      {isEnabled ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}
+                                                  </button>
+                                                  <button 
+                                                      onClick={() => {
+                                                          setEditingDay(day);
+                                                          setEditForm({
+                                                              observation: content.observation || '',
+                                                              extraTitle: content.extraTitle || '',
+                                                              extraLink: content.extraLink || '',
+                                                              isEnabled: content.isEnabled || false
+                                                          });
+                                                      }}
+                                                      className="p-2 text-sky-500 hover:bg-sky-50 rounded"
+                                                  >
+                                                      <Edit3 size={18}/>
+                                                  </button>
                                               </div>
-                                          </>
-                                      )}
-                                  </div>
-                              ))}
+                                          </div>
+                                      );
+                                  })}
+                              </div>
                           </div>
                       </div>
                   </div>
@@ -654,8 +679,8 @@ export default function App() {
                   <div className="space-y-6">
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                           <Card className="p-4 text-center bg-sky-50 border-sky-100">
-                             <div className="text-2xl font-bold text-sky-600">{allReadings.length}</div>
-                             <div className="text-xs uppercase text-sky-400 font-bold">Lecturas Totales</div>
+                             <div className="text-2xl font-bold text-sky-600">365</div>
+                             <div className="text-xs uppercase text-sky-400 font-bold">Días Plan</div>
                           </Card>
                           <Card className="p-4 text-center">
                              <div className="text-2xl font-bold text-slate-600">{allUsers.length}</div>
@@ -665,17 +690,18 @@ export default function App() {
 
                       <div className="flex justify-center gap-4 mb-4">
                           <button onClick={() => setStatsMode('byUser')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byUser' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Usuario</button>
-                          <button onClick={() => setStatsMode('byReading')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byReading' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Lectura</button>
                       </div>
 
-                      {statsMode === 'byUser' ? (
+                      {statsMode === 'byUser' && (
                           <Card className="overflow-hidden">
-                              <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Progreso por Usuario</div>
+                              <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Progreso por Usuario (Base 365 días)</div>
                               <div className="divide-y max-h-96 overflow-y-auto">
                                   {allUsers.map(u => {
-                                      const validReadingIds = new Set(allReadings.map(r => r.id));
-                                      const userReadIds = allCompletions.filter(c => c.userId === u.uid && validReadingIds.has(c.readingId)).map(c => c.readingId);
-                                      const percent = Math.round((userReadIds.length / Math.max(1, allReadings.length)) * 100);
+                                      // Filtrar completados válidos (que pertenezcan al plan)
+                                      const userReadIds = allCompletions.filter(c => c.userId === u.uid).map(c => c.readingId);
+                                      // Simple count for now, assuming ids match dates
+                                      const count = userReadIds.length;
+                                      const percent = Math.min(100, Math.round((count / 365) * 100));
                                       
                                       return (
                                           <div key={u.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
@@ -683,32 +709,12 @@ export default function App() {
                                                   <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
                                                   <div>
                                                       <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
-                                                      <div className="text-xs text-slate-400">{userReadIds.length} lecturas</div>
+                                                      <div className="text-xs text-slate-400">{count} días completados</div>
                                                   </div>
                                               </div>
                                               <div className="flex items-center gap-2">
                                                  <span className="text-xs font-bold text-slate-600">{percent}%</span>
                                                  <div className="w-16 h-1.5 bg-slate-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{width:`${percent}%`}}></div></div>
-                                              </div>
-                                          </div>
-                                      );
-                                  })}
-                              </div>
-                          </Card>
-                      ) : (
-                          <Card className="overflow-hidden">
-                              <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Estado por Lectura</div>
-                              <div className="divide-y max-h-96 overflow-y-auto">
-                                  {allReadings.map(r => {
-                                      const readers = allCompletions.filter(c => c.readingId === r.id).map(c => c.userId);
-                                      return (
-                                          <div key={r.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
-                                              <div className="flex-1">
-                                                  <div className="text-sm font-bold text-slate-700">{r.scripture}</div>
-                                                  <div className="text-xs text-slate-400">{r.date}</div>
-                                              </div>
-                                              <div className="text-right text-xs">
-                                                  <span className="font-bold text-emerald-600">{readers.length}</span> / {allUsers.length} leyeron
                                               </div>
                                           </div>
                                       );
@@ -724,12 +730,18 @@ export default function App() {
 
   // --- VISTA USUARIO (Render) ---
   
-  // Agrupar lecturas para mostrar
-  // Nota: Para la vista de usuario, 'allReadings' ya viene ordenado por fecha.
-  // Filtramos para mostrar según el tab, pero necesitamos calcular los 'locks' (bloqueos) antes de filtrar.
-  
   const todayStr = getLocalDate();
   const todayDate = new Date(todayStr + 'T12:00:00');
+
+  // Filtrar y preparar datos para el usuario
+  const userPlan = useMemo(() => {
+      // 1. Mapear estado
+      const mapped = staticPlan.map(day => {
+          const content = dailyContentMap[day.id] || {};
+          return { ...day, ...content };
+      });
+      return mapped;
+  }, [staticPlan, dailyContentMap]);
 
   return (
       <div className="min-h-screen bg-sky-50 pb-20">
@@ -753,7 +765,7 @@ export default function App() {
                       </div>
                   </div>
                   <p className="text-xs text-slate-500">
-                      Has completado {Object.keys(completionsMap).length} de {Math.max(365, allReadings.length)} lecturas asignadas.
+                      Has completado {Object.keys(completionsMap).length} de 365 días del plan.
                   </p>
               </Card>
 
@@ -763,74 +775,100 @@ export default function App() {
                   <button onClick={()=>setUserFilter('completed')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${userFilter==='completed'?'bg-white text-emerald-600 shadow-sm':'text-slate-500'}`}>Completadas</button>
               </div>
 
-              {/* LISTA DE LECTURAS */}
+              {/* LISTA DE LECTURAS USUARIO */}
               <div className="space-y-4">
-                  {allReadings.map((r, index) => {
-                      const isComplete = completionsMap[r.id];
+                  {userPlan.map((day, index) => {
+                      // 0. Si el admin NO ha habilitado el día, y no es el usuario admin, NO mostrar (o mostrar bloqueado 'Próximamente')
+                      // El requerimiento dice "El admin habilita". Asumiremos que si no está habilitado, está oculto o bloqueado permanentemente.
+                      // Vamos a mostrarlo bloqueado si es el futuro o no habilitado.
                       
-                      // LÓGICA DE FILTRADO VISUAL (Tabs)
+                      const isComplete = completionsMap[day.id];
+                      
+                      // FILTROS TABS
                       if (userFilter === 'completed' && !isComplete) return null;
                       if (userFilter === 'pending' && isComplete) return null;
 
-                      // LÓGICA DE BLOQUEO (Candados)
-                      // 1. Bloqueo por fecha (No mostrar si es futuro)
-                      const readingDate = new Date(r.date + 'T12:00:00');
+                      // LÓGICA DE VISIBILIDAD & CANDADO
+                      const readingDate = new Date(day.date + 'T12:00:00');
                       const isFuture = readingDate > todayDate;
                       
-                      // 2. Bloqueo Secuencial (No desbloquear si la anterior no está completa)
-                      // Excepción: La primera lectura (index 0) siempre está libre si la fecha es correcta.
-                      const prevReading = index > 0 ? allReadings[index - 1] : null;
-                      const isSeqLocked = prevReading && !completionsMap[prevReading.id];
+                      // Bloqueo Secuencial: El anterior debe estar completo (excepto el primero)
+                      const prevDayId = index > 0 ? userPlan[index-1].id : null;
+                      const isSeqLocked = prevDayId && !completionsMap[prevDayId];
+                      
+                      // Bloqueo Admin: Si !isEnabled
+                      const isAdminLocked = !day.isEnabled;
 
-                      const isLocked = isFuture || isSeqLocked;
+                      const isLocked = isFuture || isSeqLocked || isAdminLocked;
 
-                      // Si es futuro y estamos en pendientes, tal vez ocultar para no saturar, 
-                      // o mostrar bloqueado. El usuario pidió "habilitando por día".
-                      // Decisión: Mostrar bloqueado pero visible para saber qué viene, 
-                      // PERO si es muy al futuro (más de 1 día), mejor ocultar para no hacer scroll infinito.
+                      // Si está bloqueado y es "pendiente", ocultar si está muy lejos en el futuro para no saturar
                       const diffDays = (readingDate - todayDate) / (1000 * 60 * 60 * 24);
-                      if (isFuture && diffDays > 3) return null; // Solo mostramos los próximos 3 días bloqueados
+                      if (userFilter === 'pending' && diffDays > 3) return null; 
 
-                      const comments = commentsMap[r.id] || [];
-                      const showComments = activeReadingIdForComment === r.id;
+                      // Si está deshabilitado por admin, ocultarlo completamente a menos que sea hoy o pasado cercano
+                      if (isAdminLocked && userFilter === 'pending' && diffDays > 0) return null;
+
+                      const comments = commentsMap[day.id] || [];
+                      const showComments = activeReadingIdForComment === day.id;
 
                       return (
-                          <div key={r.id} className={`transition-all duration-300 ${isLocked ? 'opacity-60 grayscale' : 'opacity-100'}`}>
-                              <Card className={`overflow-hidden ${isLocked ? 'pointer-events-none bg-slate-50' : ''}`}>
+                          <div key={day.id} className={`transition-all duration-300 ${isLocked ? 'opacity-75 grayscale' : 'opacity-100'}`}>
+                              <Card className={`overflow-hidden ${isLocked ? 'bg-slate-50' : ''}`}>
                                   {isLocked && (
                                       <div className="bg-slate-100 p-1 text-center text-[10px] uppercase font-bold text-slate-400 flex justify-center items-center gap-1 border-b">
-                                          <Lock size={10}/> {isFuture ? `Disponible el ${r.date}` : 'Completa la anterior para desbloquear'}
+                                          <Lock size={10}/> 
+                                          {isAdminLocked ? 'Aún no disponible' : (isFuture ? `Disponible el ${day.displayDate}` : 'Completa la anterior')}
                                       </div>
                                   )}
-                                  <div className={`p-4 flex justify-between items-start ${r.type==='bible'?'bg-white border-l-4 border-sky-500':'bg-white border-l-4 border-amber-400'}`}>
+                                  <div className={`p-4 flex justify-between items-start ${day.isEnabled ? 'bg-white border-l-4 border-sky-500' : 'bg-slate-50 border-l-4 border-slate-300'}`}>
                                       <div className="flex-1">
                                           <div className="flex items-center gap-2 mb-1">
-                                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{r.date}</span>
-                                            <span className={`text-[10px] font-bold uppercase ${r.type==='bible'?'text-sky-500':'text-amber-600'}`}>{r.type==='bible'?'Bíblica':'Externo'}</span>
+                                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{day.displayDate}</span>
+                                            <span className="text-[10px] font-bold uppercase text-sky-500">Lectura Diaria</span>
                                           </div>
-                                          <h3 className="text-lg font-bold text-slate-800">{r.scripture}</h3>
-                                          {r.title && <p className="text-sm text-slate-500">{r.title}</p>}
+                                          <h3 className="text-lg font-bold text-slate-800">{day.corePassage}</h3>
                                           
-                                          {r.type === 'external' && r.externalLink && (
-                                              <a href={r.externalLink} target="_blank" className="mt-2 inline-flex items-center gap-1 text-xs text-sky-600 font-bold hover:underline border px-2 py-1 rounded bg-sky-50 border-sky-100"><LinkIcon size={12}/> Ver Recurso</a>
-                                          )}
-                                          
-                                          {r.observation && (
-                                              <div className="mt-3 bg-slate-50 p-3 rounded text-sm text-slate-600 italic border-l-2 border-slate-300">
-                                                  <span className="not-italic font-bold text-xs text-slate-400 block mb-1">Observación Pastoral:</span>
-                                                  {r.observation}
+                                          {/* SECCIÓN ADICIONAL (CONFIGURADA POR ADMIN) */}
+                                          {(day.observation || day.extraTitle) && (
+                                              <div className="mt-3 bg-slate-50 p-3 rounded text-sm text-slate-600 border border-slate-100">
+                                                  {day.observation && (
+                                                      <div className="mb-2 italic border-l-2 border-amber-300 pl-2">
+                                                          <span className="not-italic font-bold text-xs text-slate-400 block mb-1">Pastor:</span>
+                                                          "{day.observation}"
+                                                      </div>
+                                                  )}
+                                                  {day.extraTitle && (
+                                                      <div className="flex items-center gap-2 mt-2 pt-2 border-t border-slate-200">
+                                                          <span className="text-xs font-bold text-amber-600 uppercase">Extra:</span>
+                                                          {day.extraLink ? (
+                                                              <a href={day.extraLink} target="_blank" className="font-bold text-sky-600 hover:underline flex items-center gap-1">
+                                                                  {day.extraTitle} <LinkIcon size={10}/>
+                                                              </a>
+                                                          ) : (
+                                                              <span className="font-medium text-slate-700">{day.extraTitle}</span>
+                                                          )}
+                                                      </div>
+                                                  )}
                                               </div>
                                           )}
                                       </div>
-                                      <button onClick={()=>toggleCompletion(r.id)} className={`p-2 rounded-full ${isComplete?'text-emerald-500 bg-emerald-50':'text-slate-300 hover:bg-slate-100'}`} disabled={isLocked}>
-                                          {isComplete ? <CheckCircle size={24} fill="currentColor" className="text-emerald-100"/> : <div className="w-6 h-6 rounded-full border-2 border-slate-300"></div>}
-                                      </button>
+                                      
+                                      <div className="flex flex-col items-center gap-2 ml-2">
+                                          <button 
+                                              onClick={()=>toggleCompletion(day.id)} 
+                                              className={`p-2 rounded-full ${isComplete?'text-emerald-500 bg-emerald-50':'text-slate-300 hover:bg-slate-100'}`} 
+                                              disabled={isLocked}
+                                          >
+                                              {isComplete ? <CheckCircle size={24} fill="currentColor" className="text-emerald-100"/> : <div className="w-6 h-6 rounded-full border-2 border-slate-300"></div>}
+                                          </button>
+                                          <button onClick={() => sendWhatsAppNotification(day, day)} className="text-emerald-500 opacity-50 hover:opacity-100 p-1"><MessageCircle size={16}/></button>
+                                      </div>
                                   </div>
                                   
                                   {!isLocked && (
                                     <div className="bg-slate-50/50 border-t p-2">
                                         <button 
-                                            onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)}
+                                            onClick={() => setActiveReadingIdForComment(showComments ? null : day.id)}
                                             className={`flex items-center gap-2 px-4 py-2 rounded-lg w-full justify-center text-sm font-medium transition-colors ${
                                                 showComments 
                                                 ? 'bg-slate-200 text-slate-800' 
@@ -838,7 +876,7 @@ export default function App() {
                                             }`}
                                         >
                                             <MessageSquare size={18} />
-                                            {comments.length > 0 ? `Ver ${comments.length} Comentarios` : 'Escribir comentario'}
+                                            {comments.length > 0 ? `Ver ${comments.length} Comentarios` : 'Comentar'}
                                             <ChevronDown 
                                                 size={16} 
                                                 className={`ml-auto transform transition-transform duration-200 ${showComments ? 'rotate-180' : ''}`} 
@@ -860,10 +898,10 @@ export default function App() {
                                                   </div>
                                               ))}
                                               {comments.length === 0 && (
-                                                  <p className="text-center text-xs text-slate-400 italic py-2">Sé el primero en comentar.</p>
+                                                  <p className="text-center text-xs text-slate-400 italic py-2">Sin comentarios aún.</p>
                                               )}
                                           </div>
-                                          <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2">
+                                          <form onSubmit={e=>postComment(e,day.id)} className="flex gap-2">
                                               <input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe..." value={commentText} onChange={e=>setCommentText(e.target.value)}/>
                                               <button type="submit" disabled={!commentText.trim()} className="text-sky-500 hover:bg-sky-100 p-2 rounded"><Send size={16}/></button>
                                           </form>
@@ -873,14 +911,10 @@ export default function App() {
                           </div>
                       );
                   })}
-                  {/* Mensaje si todo está completo y no hay nada bloqueado visible */}
-                  {userFilter === 'pending' && allReadings.filter(r => {
-                      const readingDate = new Date(r.date + 'T12:00:00');
-                      const diffDays = (readingDate - todayDate) / (1000 * 60 * 60 * 24);
-                      return !completionsMap[r.id] && (!readingDate > todayDate || diffDays <= 3);
-                  }).length === 0 && (
+                  {/* Mensaje de estado vacío */}
+                  {userFilter === 'pending' && userPlan.every(d => completionsMap[d.id] || d.date > getLocalDate()) && (
                       <div className="text-center py-10 text-slate-400">
-                          <p>¡Estás al día con las lecturas!</p>
+                          <p>¡Estás al día! Revisa mañana para la siguiente lectura.</p>
                       </div>
                   )}
               </div>
