@@ -48,7 +48,7 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 
 const APP_ID = 'teologia-paulina-app';
-const LOGO_URL = "https://i.ibb.co/rD9fNMv/1764042450953.png";
+const LOGO_URL = "https://i.postimg.cc/DwmFG9gG/Logo-TP.jpg";
 const FAVICON_URL = "https://i.postimg.cc/DwmFG9gG/Logo-TP.jpg";
 const YOUTUBE_CHANNEL = "https://youtube.com/@teologiapaulina?si=5gwOAmgbXHh1hbgc";
 
@@ -221,6 +221,15 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
 
     const docRef = doc(db, 'artifacts', APP_ID, 'daily_content', day.id);
     await setDoc(docRef, { isEnabled: !currentStatus }, { merge: true });
+  };
+
+  const sendWhatsAppNotification = (day, content) => {
+      const link = "https://teologia-paulina-app.vercel.app";
+      let msg = `*Plan Bíblico Diario* 🕊️\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Lectura:* ${day.corePassage}`;
+      if (content?.observation) msg += `\n\n💬 *Pastoral:* _"${content.observation}"_`;
+      if (content?.extraReadings?.length > 0) msg += `\n\n➕ *Material Extra:* ${content.extraReadings.length} recursos disponibles.`;
+      msg += `\n\n🔗 *Leer aquí:* ${link}`;
+      window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   const updateUserStatus = async (uid, field, value) => {
@@ -405,6 +414,13 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-2">
+                                                <button 
+                                                    onClick={() => sendWhatsAppNotification(day, content)}
+                                                    className="p-2 text-emerald-500 hover:bg-emerald-50 rounded"
+                                                    title="Enviar Recordatorio WhatsApp"
+                                                >
+                                                    <MessageCircle size={18}/>
+                                                </button>
                                                 <button 
                                                     onClick={() => toggleDayEnabled(day, isEnabled)}
                                                     disabled={isPast}
