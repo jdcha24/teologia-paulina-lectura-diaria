@@ -30,7 +30,7 @@ import {
   PlusCircle, BarChart2, Edit3, Save, ChevronDown, Youtube, ScrollText, 
   ArrowRight, ExternalLink, Shield, ShieldAlert, ShieldCheck, Bell, X, 
   AlertTriangle, FileText, Link as LinkIcon, Clock, CheckSquare, Activity, Book,
-  Flame, Award, Crown, Star, Medal, Zap, MessageCircle, AlertCircle, Lock, Search
+  Flame, Award, Crown, Star, Medal, Zap, MessageCircle, AlertCircle, Lock
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE (PRODUCCIÓN) ---
@@ -74,34 +74,6 @@ const BIBLE_STRUCTURE = {
   "3 Juan": 1, "Judas": 1, "Apocalipsis": 22
 };
 const BIBLE_BOOKS_ORDER = Object.keys(BIBLE_STRUCTURE);
-
-// --- GENERADOR DE PLAN ---
-const getBiblePlanForDate = (dateStr) => {
-    const date = new Date(dateStr + 'T12:00:00');
-    const start = new Date(date.getFullYear(), 0, 0);
-    const diff = date - start;
-    const oneDay = 1000 * 60 * 60 * 24;
-    const dayOfYear = Math.floor(diff / oneDay);
-    // Lógica simplificada para demo (se repetiría en producción real con JSON completo)
-    let book = "Génesis";
-    let chapter = dayOfYear > 0 ? dayOfYear : 1;
-    if (dayOfYear > 50) { book = "Éxodo"; chapter = dayOfYear - 50; }
-    if (dayOfYear > 90) { book = "Levítico"; chapter = dayOfYear - 90; }
-    return { id: `plan_${dateStr}`, date: dateStr, type: 'bible_plan', title: `Plan Día ${dayOfYear}`, scripture: `${book} ${chapter}`, isPlan: true };
-};
-
-// Generar todo el año para estadísticas
-const generateFullYearPlan = () => {
-    const yearPlan = [];
-    const year = new Date().getFullYear();
-    const startDate = new Date(year, 0, 1);
-    const endDate = new Date(); // Hasta hoy para no llenar stats con futuro
-    
-    for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
-        yearPlan.push(getBiblePlanForDate(d.toISOString().split('T')[0]));
-    }
-    return yearPlan;
-};
 
 // --- Configuración de Insignias ---
 const BADGES = [
@@ -160,8 +132,7 @@ export default function App() {
   const [notification, setNotification] = useState(null);
 
   // Datos
-  const [dbReadings, setDbReadings] = useState([]); // Solo lecturas de DB (Extras + Anotaciones)
-  const [allReadings, setAllReadings] = useState([]); // Mezcla (Plan + DB Extras)
+  const [allReadings, setAllReadings] = useState([]);
   const [allUsers, setAllUsers] = useState([]);
   const [allCompletions, setAllCompletions] = useState([]); 
   const [completionsMap, setCompletionsMap] = useState({});
@@ -170,14 +141,15 @@ export default function App() {
   // Gamificación
   const [streak, setStreak] = useState(0);
 
-  // Estado de UI
+  // Estado de UI Usuario
   const [userFilter, setUserFilter] = useState('pending'); 
+  
+  // Estado de UI Admin Stats
   const [statsMode, setStatsMode] = useState('byUser'); 
   const [expandedStatItem, setExpandedStatItem] = useState(null);
 
   // Inputs
   const [commentText, setCommentText] = useState('');
-  const [currentDateView, setCurrentDateView] = useState(getLocalDate());
   const [newReading, setNewReading] = useState({ 
     type: 'bible', date: getLocalDate(), 
     title: '', startBook: 'Romanos', startChapter: '1', endBook: 'Romanos', endChapter: '1', verses: '', 
@@ -185,7 +157,7 @@ export default function App() {
   });
   const [activeReadingIdForComment, setActiveReadingIdForComment] = useState(null);
   const [editingReading, setEditingReading] = useState(null); 
-  const [adminCommentText, setAdminCommentText] = useState(''); // Estado local para edición admin
+  const [loginName, setLoginName] = useState('');
 
   // 1. Inicializar Auth
   useEffect(() => {
@@ -207,7 +179,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. Escuchar Perfil
+  // 2. Escuchar Perfil de Usuario
   useEffect(() => {
     if (!user) return;
     if (userData && userData.uid !== user.uid) { setLoading(false); return; }
@@ -223,38 +195,64 @@ export default function App() {
             setUserData(null);
         }
         setLoading(false);
-    }, () => setLoading(false));
+    }, (error) => {
+        console.log("Esperando perfil...", error);
+        setLoading(false);
+    });
     return () => unsubscribe();
   }, [user]);
 
-  // 3. Logins
+  // 3. Login con Google
   const handleGoogleLogin = async () => {
     setLoading(true);
     try {
       const provider = new GoogleAuthProvider();
       const result = await signInWithPopup(auth, provider);
-      await checkAndCreateProfile(result.user, result.user.displayName);
-    } catch (e) { alert("Error login"); setLoading(false); }
+      const user = result.user;
+      await checkAndCreateProfile(user, user.displayName || "Usuario Google");
+    } catch (error) {
+      console.error("Error Google:", error);
+      let msg = "Error al conectar con Google.";
+      if (error.code === 'auth/unauthorized-domain') {
+         const currentDomain = window.location.hostname;
+         msg = `⚠️ Dominio bloqueado: "${currentDomain}". Agrégalo en Firebase Console.`;
+      } else if (error.code === 'auth/popup-blocked') {
+         msg = "⚠️ Pop-up bloqueado. Permite ventanas emergentes.";
+      }
+      alert(msg);
+      setLoading(false);
+    }
   };
 
-  const checkAndCreateProfile = async (user, name) => {
+  // 4. Crear Perfil
+  const checkAndCreateProfile = async (user, name, forceAdmin = false) => {
     const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid);
     try {
         const userSnap = await getDoc(userRef);
         if (!userSnap.exists()) {
-            const usersSnap = await getDocs(collection(db, 'artifacts', APP_ID, 'users'));
-            const isFirst = usersSnap.empty;
+            let isFirst = forceAdmin;
+            if (!isFirst) {
+                 try {
+                    const usersSnap = await getDocs(collection(db, 'artifacts', APP_ID, 'users'));
+                    isFirst = usersSnap.empty;
+                } catch(e) {}
+            }
+
             const newProfile = {
-                uid: user.uid, displayName: name,
-                email: user.email, photoURL: user.photoURL,
+                uid: user.uid,
+                displayName: name,
+                email: user.email || user.uid + '@teologia.com',
+                photoURL: user.photoURL || `https://api.dicebear.com/7.x/initials/svg?seed=${name}&backgroundColor=0ea5e9&textColor=ffffff`,
                 role: isFirst ? 'admin' : 'user',
-                isApproved: isFirst, createdAt: serverTimestamp()
+                isApproved: isFirst ? true : false,
+                createdAt: serverTimestamp()
             };
             await setDoc(userRef, newProfile);
             setUserData(newProfile);
-            setView(isFirst ? 'admin' : 'pending');
+            if (!newProfile.isApproved) setView('pending');
+            else setView(newProfile.role === 'admin' ? 'admin' : 'dashboard');
         }
-    } catch (e) {}
+    } catch (error) { console.error("Error perfil:", error); }
   };
 
   const handleLogout = async () => {
@@ -265,59 +263,26 @@ export default function App() {
   // --- LÓGICA DE DATOS ---
   const activeUid = userData?.uid;
 
-  // Leer DB Readings (Extras y Anotaciones)
+  // Leer TODAS las Lecturas
   useEffect(() => {
     if (!userData?.isApproved) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'readings'));
     return onSnapshot(q, (snapshot) => {
         const docs = snapshot.docs.map(d => ({id: d.id, ...d.data()}));
-        setDbReadings(docs);
-        
-        // Combinar Plan + DB para vista unificada
-        // Generamos plan +- 30 dias para vista usuario, o todo el año para stats
-        // Para simplificar en el estado:
-        const plan = generateFullYearPlan();
-        
-        // Insertar extras y anotaciones
-        const combined = [];
-        
-        // Mapa de anotaciones por fecha
-        const annotations = {};
-        docs.filter(d => d.type === 'bible_plan_annotation').forEach(d => annotations[d.date] = d.observation);
-        
-        plan.forEach(p => {
-            if (annotations[p.date]) p.observation = annotations[p.date];
-            combined.push(p);
-        });
-        
-        // Agregar extras (no plan)
-        docs.filter(d => d.type !== 'bible_plan_annotation').forEach(d => combined.push(d));
-        
-        // Ordenar
-        combined.sort((a,b) => {
+        docs.sort((a,b) => {
             if (a.date > b.date) return -1;
             if (a.date < b.date) return 1;
             return 0;
         });
-        
-        setAllReadings(combined);
+        setAllReadings(docs);
     });
   }, [userData]);
 
-  // Efecto para actualizar el input de Admin cuando cambia la fecha seleccionada
+  // Leer Comentarios (CORREGIDO)
   useEffect(() => {
-    if (userData?.role !== 'admin') return;
-    const annotation = dbReadings.find(d => d.type === 'bible_plan_annotation' && d.date === currentDateView);
-    setAdminCommentText(annotation ? annotation.observation : '');
-  }, [currentDateView, dbReadings, userData]);
-
-
-  // Leer Comentarios y Completions
-  useEffect(() => {
-    if (!userData?.isApproved) return;
-    
-    const qComments = query(collection(db, 'artifacts', APP_ID, 'comments'), orderBy('createdAt', 'desc'));
-    const unsubComments = onSnapshot(qComments, (snapshot) => {
+    if (!userData?.isApproved || allReadings.length === 0) return;
+    const q = query(collection(db, 'artifacts', APP_ID, 'comments'), orderBy('createdAt', 'desc'));
+    return onSnapshot(q, (snapshot) => {
         const newMap = {};
         snapshot.docs.forEach(doc => {
             const d = doc.data();
@@ -325,54 +290,135 @@ export default function App() {
             newMap[d.readingId].push({id: doc.id, ...d});
         });
         setCommentsMap(newMap);
-    }, () => {});
+    }, (e) => {
+        if (e.code === 'failed-precondition') {
+             const q2 = query(collection(db, 'artifacts', APP_ID, 'comments'));
+             onSnapshot(q2, (snap) => {
+                const newMap = {};
+                snap.docs.forEach(doc => {
+                    const d = doc.data();
+                    if (!newMap[d.readingId]) newMap[d.readingId] = [];
+                    newMap[d.readingId].push({id: doc.id, ...d});
+                });
+                 Object.keys(newMap).forEach(k => {
+                     newMap[k].sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
+                 });
+                 setCommentsMap(newMap);
+             });
+        }
+    });
+  }, [userData, allReadings]); 
 
-    return () => { unsubComments(); };
-  }, [userData]);
-
+  // Leer Progreso Personal y Racha
   useEffect(() => {
-     if (!activeUid) return;
-     const qComp = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
-     const unsubComp = onSnapshot(qComp, (snapshot) => {
+    if (!activeUid || allReadings.length === 0) return;
+    const q = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
+    return onSnapshot(q, (snapshot) => {
         const map = {};
-        const dates = new Set();
-        // Solo contar lecturas que EXISTEN en allReadings
-        // Esto soluciona el problema de lecturas borradas contando para racha
-        const validIds = new Set(allReadings.map(r => r.id));
+        const userCompletedReadings = new Set(); // IDs de lecturas completadas
         
         snapshot.docs.forEach(doc => {
             const data = doc.data();
-            if (validIds.has(data.readingId)) {
-                map[data.readingId] = true;
-                if (data.completedAt) dates.add(new Date(data.completedAt.seconds * 1000).toISOString().split('T')[0]);
-            }
+            map[data.readingId] = true;
+            userCompletedReadings.add(data.readingId);
         });
         setCompletionsMap(map);
         
-        // Racha simple basada en días activos (para demo)
-        setStreak(dates.size); 
-     });
-     return () => { unsubComp(); };
+        // --- CALCULO DE RACHA ESTRICTO ---
+        // 1. Agrupar lecturas requeridas por fecha
+        const requiredByDate = {};
+        allReadings.forEach(r => {
+            if (!requiredByDate[r.date]) requiredByDate[r.date] = [];
+            requiredByDate[r.date].push(r.id);
+        });
+
+        // 2. Verificar días completados al 100%
+        const completedDates = new Set();
+        Object.keys(requiredByDate).forEach(date => {
+            const readingIds = requiredByDate[date];
+            // Si todas las lecturas de ese día están en userCompletedReadings
+            const isDayComplete = readingIds.every(id => userCompletedReadings.has(id));
+            if (isDayComplete) {
+                completedDates.add(date);
+            }
+        });
+
+        // 3. Contar hacia atrás
+        let currentStreak = 0;
+        let checkDate = new Date(); 
+        const today = getLocalDate();
+        
+        // Ajustar checkDate para comparar strings
+        let pointerDate = new Date(today + 'T12:00:00'); // Usar medio día para evitar saltos de zona
+        
+        // Si hoy no está completo, empezamos a chequear desde ayer
+        if (!completedDates.has(today)) {
+            pointerDate.setDate(pointerDate.getDate() - 1);
+            const yesterdayStr = pointerDate.toISOString().split('T')[0];
+            if (!completedDates.has(yesterdayStr)) {
+                setStreak(0);
+                return;
+            }
+        }
+
+        // Loop
+        while (true) {
+            const dateStr = pointerDate.toISOString().split('T')[0];
+            if (completedDates.has(dateStr)) {
+                currentStreak++;
+                pointerDate.setDate(pointerDate.getDate() - 1);
+            } else {
+                break;
+            }
+        }
+        setStreak(currentStreak);
+
+    });
   }, [activeUid, allReadings]);
 
   // Admin Stats
   useEffect(() => {
     if (userData?.role !== 'admin') return;
-    const unsubUsers = onSnapshot(collection(db, 'artifacts', APP_ID, 'users'), s => setAllUsers(s.docs.map(d => ({id: d.id, ...d.data()}))));
-    const unsubAllComp = onSnapshot(collection(db, 'artifacts', APP_ID, 'completions'), s => setAllCompletions(s.docs.map(d => d.data())));
-    return () => { unsubUsers(); unsubAllComp(); };
+    
+    const unsubUsers = onSnapshot(collection(db, 'artifacts', APP_ID, 'users'), s => {
+        setAllUsers(s.docs.map(d => ({id: d.id, ...d.data()})));
+    });
+
+    const unsubStats = onSnapshot(collection(db, 'artifacts', APP_ID, 'completions'), s => {
+        setAllCompletions(s.docs.map(d => d.data()));
+    });
+
+    return () => { unsubUsers(); unsubStats(); };
   }, [userData]);
 
-  // --- ACCIONES ---
+  // --- NOTIFICACIÓN POR WHATSAPP ---
+  const sendWhatsAppNotification = (reading) => {
+      const title = reading.scripture || reading.title || 'Nueva Lectura';
+      const date = reading.date;
+      const observation = reading.observation ? `_"${reading.observation}"_` : '';
+      const link = APP_URL || window.location.origin;
 
-  const toggleCompletion = async (readingId, date) => {
+      const message = `*Teología Paulina - Lectura Diaria* 🕊️\n\n📅 *Fecha:* ${date}\n📖 *Tema:* ${title}\n\n${observation}\n\n🔗 *Ingresa aquí para completar:* ${link}`;
+      const encodedMessage = encodeURIComponent(message);
+      window.open(`https://wa.me/?text=${encodedMessage}`, '_blank');
+  };
+
+  // --- ACCIONES ---
+  const toggleCompletion = async (readingId) => {
+      if (!activeUid) return;
       const isComplete = completionsMap[readingId];
-      if (!confirm(isComplete ? "¿Deseas desmarcar esta lectura?" : "Confirmar lectura completada")) return;
       
+      // CONFIRMACIÓN RESTAURADA
+      const msg = isComplete 
+        ? "¿Deseas desmarcar esta lectura? Se restará de tu progreso diario." 
+        : "Confirma que has leído y estudiado el material asignado.";
+      
+      if (!confirm(msg)) return;
+
       const id = `${activeUid}_${readingId}`;
       const ref = doc(db, 'artifacts', APP_ID, 'completions', id);
       if (isComplete) await deleteDoc(ref);
-      else await setDoc(ref, { userId: activeUid, userName: userData.displayName, readingId, date, completedAt: serverTimestamp() });
+      else await setDoc(ref, { userId: activeUid, userName: userData.displayName, readingId, completedAt: serverTimestamp() });
   };
 
   const postComment = async (e, readingId) => {
@@ -382,17 +428,6 @@ export default function App() {
           text: commentText, readingId, userId: activeUid, userName: userData.displayName, userPhoto: userData.photoURL, createdAt: serverTimestamp()
       });
       setCommentText('');
-  };
-
-  const saveAdminComment = async () => {
-      const docId = `plan_annotation_${currentDateView}`;
-      await setDoc(doc(db, 'artifacts', APP_ID, 'readings', docId), {
-          type: 'bible_plan_annotation',
-          date: currentDateView,
-          observation: adminCommentText,
-          updatedAt: serverTimestamp()
-      });
-      alert("Comentario pastoral actualizado correctamente");
   };
 
   const createReading = async (e) => {
@@ -416,15 +451,31 @@ export default function App() {
       }
       await addDoc(collection(db, 'artifacts', APP_ID, 'readings'), data);
       
-      // Reset y mantener fecha
-      setNewReading(prev => ({...prev, title: '', externalLink: '', externalContent: '', observation: ''}));
-      
-      if(confirm("Lectura creada. ¿Notificar por WhatsApp?")) {
-          const title = data.scripture || data.title;
-          const link = APP_URL || window.location.origin;
-          const msg = `*Nueva Lectura* 📖\n${title}\n${data.observation || ''}\n🔗 ${link}`;
-          window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
+      // Reset
+      setNewReading({ 
+        type: 'bible', date: date, 
+        title: '', startBook: 'Romanos', startChapter: '1', endBook: 'Romanos', endChapter: '1', verses: '', 
+        externalLink: '', externalContent: '', observation: '' 
+      });
+
+      if(confirm("Lectura creada exitosamente.\n\n¿Deseas enviar la notificación por WhatsApp ahora?")) {
+          sendWhatsAppNotification({...data}); 
       }
+  };
+
+  const updateReading = async (e) => {
+      e.preventDefault();
+      if (!editingReading) return;
+      
+      const ref = doc(db, 'artifacts', APP_ID, 'readings', editingReading.id);
+      await updateDoc(ref, {
+          title: editingReading.title,
+          scripture: editingReading.scripture,
+          observation: editingReading.observation,
+          date: editingReading.date
+      });
+      setEditingReading(null);
+      alert("Lectura actualizada");
   };
 
   const deleteReading = async (id) => {
@@ -437,9 +488,9 @@ export default function App() {
 
   const getChapters = (book) => Array.from({length: BIBLE_STRUCTURE[book]||50}, (_,i) => i+1);
 
+  // Helpers para agrupar
   const getGroupedReadings = (filter) => {
       const filtered = allReadings.filter(r => {
-          // Filtrar solo mostrar +- 30 días para no saturar la UI de usuario (opcional, aquí mostramos todo)
           const isCompleted = completionsMap[r.id];
           return filter === 'completed' ? isCompleted : !isCompleted;
       });
@@ -450,6 +501,12 @@ export default function App() {
       });
       return groups; 
   };
+  
+  const isNew = (timestamp) => {
+      if (!timestamp) return false;
+      const diff = (new Date() - new Date(timestamp.seconds * 1000)) / (1000 * 60 * 60);
+      return diff < 24;
+  }
 
   // --- RENDERS ---
 
@@ -486,22 +543,29 @@ export default function App() {
 
   const Header = () => (
       <header className="bg-white border-b sticky top-0 z-10 px-4 h-16 flex items-center justify-between shadow-sm">
-          <div className="flex items-center gap-2 font-bold text-slate-800"><img src={LOGO_URL} className="w-8 h-8"/> <span className="hidden sm:inline">Teología Paulina</span></div>
+          <div className="flex items-center gap-2 font-serif font-bold text-slate-800">
+              <img src={LOGO_URL} className="w-8 h-8"/> 
+              <span className="hidden sm:inline">Teología Paulina</span>
+          </div>
           <div className="flex gap-3 items-center">
               {streak > 0 && (
                   <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-full border border-amber-100" title={`${streak} días seguidos`}>
                       <Flame size={16} className="text-amber-500 fill-amber-500" /><span className="text-xs font-bold text-amber-600">{streak}</span>
                   </div>
               )}
-              <a href={YOUTUBE_CHANNEL} target="_blank" className="text-red-600"><Youtube/></a>
-              {userData?.role === 'admin' && <button onClick={()=>setView(view==='admin'?'dashboard':'admin')} className="text-xs bg-slate-100 px-3 py-1 rounded">{view==='admin'?'Ver App':'Ver Admin'}</button>}
-              <img src={userData?.photoURL} className="w-8 h-8 rounded-full"/>
+              <a href={YOUTUBE_CHANNEL} target="_blank" rel="noopener noreferrer" className="p-2 text-red-600 hover:bg-red-50 rounded-full transition-colors" title="YouTube"><Youtube size={24} /></a>
+              {userData?.role === 'admin' && (
+                  <div className="flex bg-slate-100 p-1 rounded">
+                      <button onClick={()=>setView('admin')} className={`px-3 py-1 text-xs rounded ${view==='admin'?'bg-white shadow text-sky-600':''}`}>Admin</button>
+                      <button onClick={()=>setView('dashboard')} className={`px-3 py-1 text-xs rounded ${view==='dashboard'?'bg-white shadow text-sky-600':''}`}>Lectura</button>
+                  </div>
+              )}
+              <img src={userData?.photoURL} className="w-8 h-8 rounded-full border"/>
               <button onClick={handleLogout} className="text-slate-400 hover:text-red-500"><LogOut size={20}/></button>
           </div>
       </header>
   );
 
-  // --- ADMIN VIEW ---
   if (view === 'admin') return (
       <div className="min-h-screen bg-sky-50 pb-20">
           <Header/>
@@ -513,45 +577,69 @@ export default function App() {
               </div>
 
               {activeTab === 'reading' && (
-                  <div className="grid md:grid-cols-2 gap-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                       <Card className="p-6 h-fit">
-                          <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><Calendar size={18}/> Plan Diario (Pastoral)</h3>
-                          <p className="text-xs text-slate-500 mb-4">Selecciona un día para editar o agregar el comentario pastoral.</p>
-                          
-                          <input type="date" className="w-full p-2 border rounded mb-4" value={currentDateView} onChange={e=>setCurrentDateView(e.target.value)}/>
-                          
-                          <div className="bg-slate-50 p-4 rounded border mb-4">
-                              <div className="font-bold text-sky-700">Lectura del Día:</div>
-                              <div className="text-lg">{getBiblePlanForDate(currentDateView).scripture}</div>
-                          </div>
-
-                          <textarea 
-                            className="w-full p-3 border rounded h-32 text-sm" 
-                            placeholder="Escribe aquí la reflexión pastoral para este día..."
-                            value={adminCommentText}
-                            onChange={e => setAdminCommentText(e.target.value)}
-                          />
-                          <div className="mt-2 flex justify-end">
-                              <Button onClick={saveAdminComment}>Guardar Reflexión</Button>
-                          </div>
-                      </Card>
-
-                      <Card className="p-6 h-fit">
-                          <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2"><FileText size={18}/> Material Extra</h3>
-                          <form onSubmit={createReading} className="space-y-3">
-                              <input type="date" className="p-2 border rounded text-sm w-full" value={newReading.date} onChange={e=>setNewReading({...newReading, date: e.target.value})}/>
-                              <input className="w-full p-2 border rounded text-sm" placeholder="Título" value={newExtraReading.title} onChange={e=>setNewExtraReading({...newExtraReading, title:e.target.value})}/>
-                              <input className="w-full p-2 border rounded text-sm" placeholder="Enlace (YouTube/PDF)" value={newExtraReading.externalLink} onChange={e=>setNewExtraReading({...newExtraReading, externalLink:e.target.value})}/>
-                              <textarea className="w-full p-2 border rounded text-sm" placeholder="Descripción" value={newExtraReading.externalContent} onChange={e=>setNewExtraReading({...newExtraReading, externalContent:e.target.value})}/>
-                              <Button onClick={async () => {
-                                  await addDoc(collection(db, 'artifacts', APP_ID, 'readings'), {
-                                      ...newExtraReading, type: 'external', date: newReading.date, createdAt: serverTimestamp()
-                                  });
-                                  setNewExtraReading({type: 'external', title: '', externalLink: '', externalContent: ''});
-                                  alert("Material extra publicado");
-                              }}>Publicar Extra</Button>
+                          <h2 className="font-bold text-lg mb-4 text-slate-800">Nueva Asignación</h2>
+                          <form onSubmit={createReading} className="space-y-4">
+                              <div className="grid grid-cols-2 gap-2">
+                                  <input type="date" className="p-2 border rounded text-sm" value={newReading.date} onChange={e=>setNewReading({...newReading, date: e.target.value})}/>
+                                  <select className="p-2 border rounded text-sm" value={newReading.type} onChange={e=>setNewReading({...newReading, type: e.target.value})}>
+                                      <option value="bible">Biblia</option>
+                                      <option value="external">Externo</option>
+                                  </select>
+                              </div>
+                              {newReading.type === 'bible' ? (
+                                  <div className="space-y-2 bg-sky-50 p-3 rounded">
+                                      <div className="flex gap-1"><select className="flex-1 p-2 border rounded text-sm" value={newReading.startBook} onChange={e=>setNewReading({...newReading, startBook:e.target.value, endBook:e.target.value})}>{BIBLE_BOOKS_ORDER.map(b=><option key={b}>{b}</option>)}</select><select className="w-16 p-2 border rounded text-sm" value={newReading.startChapter} onChange={e=>setNewReading({...newReading, startChapter:e.target.value})}>{getChapters(newReading.startBook).map(n=><option key={n}>{n}</option>)}</select></div>
+                                      <div className="flex gap-1"><select className="flex-1 p-2 border rounded text-sm" value={newReading.endBook} onChange={e=>setNewReading({...newReading, endBook:e.target.value})}>{BIBLE_BOOKS_ORDER.map(b=><option key={b}>{b}</option>)}</select><select className="w-16 p-2 border rounded text-sm" value={newReading.endChapter} onChange={e=>setNewReading({...newReading, endChapter:e.target.value})}>{getChapters(newReading.endBook).map(n=><option key={n}>{n}</option>)}</select></div>
+                                      <input className="w-full p-2 border rounded text-sm" placeholder="Versículos" value={newReading.verses} onChange={e=>setNewReading({...newReading, verses:e.target.value})}/>
+                                  </div>
+                              ) : (
+                                  <div className="space-y-2 bg-amber-50 p-3 rounded">
+                                      <input className="w-full p-2 border rounded text-sm" placeholder="Título *" required value={newReading.title} onChange={e=>setNewReading({...newReading, title:e.target.value})}/>
+                                      <input className="w-full p-2 border rounded text-sm" placeholder="Link URL" value={newReading.externalLink} onChange={e=>setNewReading({...newReading, externalLink:e.target.value})}/>
+                                      <textarea className="w-full p-2 border rounded text-sm" placeholder="Contenido" value={newReading.externalContent} onChange={e=>setNewReading({...newReading, externalContent:e.target.value})}/>
+                                  </div>
+                              )}
+                              {newReading.type === 'bible' && <input className="w-full p-2 border rounded text-sm" placeholder="Título Tema" value={newReading.title} onChange={e=>setNewReading({...newReading, title:e.target.value})}/>}
+                              <textarea className="w-full p-2 border rounded text-sm" placeholder="Observación Pastoral" value={newReading.observation} onChange={e=>setNewReading({...newReading, observation:e.target.value})}/>
+                              <Button type="submit" variant="primary" className="w-full">Publicar</Button>
                           </form>
                       </Card>
+
+                      <div className="space-y-3">
+                          <h3 className="font-bold text-slate-700">Historial</h3>
+                          {allReadings.map(r => (
+                              <div key={r.id} className="bg-white p-3 rounded border flex justify-between items-start hover:shadow-sm transition-shadow">
+                                  {editingReading?.id === r.id ? (
+                                      <form onSubmit={updateReading} className="w-full space-y-2">
+                                          <div className="font-bold text-sky-600 mb-2">Editando: {r.scripture}</div>
+                                          <input className="w-full p-1 border rounded text-sm" value={editingReading.title} onChange={e=>setEditingReading({...editingReading, title:e.target.value})} placeholder="Título"/>
+                                          <input type="date" className="w-full p-1 border rounded text-sm" value={editingReading.date} onChange={e=>setEditingReading({...editingReading, date:e.target.value})}/>
+                                          <textarea className="w-full p-1 border rounded text-sm min-h-[100px]" value={editingReading.observation} onChange={e=>setEditingReading({...editingReading, observation:e.target.value})} placeholder="Comentario Pastoral"/>
+                                          <div className="flex gap-2 justify-end">
+                                              <button type="button" onClick={()=>setEditingReading(null)} className="text-xs text-slate-500">Cancelar</button>
+                                              <button type="submit" className="text-xs bg-sky-500 text-white px-3 py-1 rounded">Guardar Cambios</button>
+                                          </div>
+                                      </form>
+                                  ) : (
+                                      <>
+                                          <div className="flex-1 cursor-pointer" onClick={()=>setEditingReading(r)}>
+                                              <div className="font-bold text-slate-800 text-sm">{r.scripture} <span className="font-normal text-slate-400 ml-2 text-xs">{r.date}</span></div>
+                                              {r.observation ? 
+                                                 <div className="text-xs text-slate-600 italic mt-1 line-clamp-2 border-l-2 border-amber-300 pl-2">"{r.observation}"</div> 
+                                                 : <div className="text-xs text-slate-300 mt-1 italic">Sin comentario pastoral</div>}
+                                          </div>
+                                          <div className="flex gap-2 ml-2 items-center">
+                                              <button onClick={() => sendWhatsAppNotification(r)} className="text-emerald-500 hover:bg-emerald-50 p-1 rounded" title="Compartir en WhatsApp"><MessageCircle size={16}/></button>
+                                              <button onClick={()=>setEditingReading(r)} className="text-sky-500 hover:bg-sky-50 p-1 rounded" title="Editar"><Edit3 size={16}/></button>
+                                              <button onClick={()=>deleteReading(r.id)} className="text-slate-300 hover:text-red-500 p-1 rounded" title="Borrar"><X size={16}/></button>
+                                          </div>
+                                      </>
+                                  )}
+                              </div>
+                          ))}
+                      </div>
                   </div>
               )}
 
@@ -581,35 +669,31 @@ export default function App() {
 
               {activeTab === 'stats' && (
                   <div className="space-y-6">
-                      {/* Resumen */}
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                           <Card className="p-4 text-center bg-sky-50 border-sky-100">
                              <div className="text-2xl font-bold text-sky-600">{allReadings.length}</div>
-                             <div className="text-xs uppercase text-sky-400 font-bold">Lecturas Disp.</div>
+                             <div className="text-xs uppercase text-sky-400 font-bold">Lecturas Totales</div>
                           </Card>
                           <Card className="p-4 text-center bg-emerald-50 border-emerald-100">
-                             {/* Filtro inteligente: Solo contar completions de lecturas que existen actualmente */}
-                             <div className="text-2xl font-bold text-emerald-600">
-                                 {allCompletions.filter(c => allReadings.some(r => r.id === c.readingId)).length}
-                             </div>
+                             <div className="text-2xl font-bold text-emerald-600">{allCompletions.filter(c => allReadings.find(r => r.id === c.readingId)).length}</div>
                              <div className="text-xs uppercase text-emerald-400 font-bold">Leídas (Total)</div>
                           </Card>
                           <Card className="p-4 text-center">
                              <div className="text-2xl font-bold text-slate-600">{allUsers.length}</div>
-                             <div className="text-xs uppercase text-slate-400 font-bold">Usuarios</div>
+                             <div className="text-xs uppercase text-slate-400 font-bold">Estudiantes</div>
                           </Card>
                       </div>
 
                       <div className="flex justify-center gap-4 mb-4">
-                          <button onClick={() => setStatsMode('byUser')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byUser' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Usuario</button>
+                          <button onClick={() => setStatsMode('byUser')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byUser' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Estudiante</button>
                           <button onClick={() => setStatsMode('byReading')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byReading' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Lectura</button>
                       </div>
 
                       {statsMode === 'byUser' ? (
                           <Card className="overflow-hidden">
                               <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm flex justify-between items-center">
-                                  <span>Progreso por Usuario</span>
-                                  <span className="text-xs font-normal text-slate-500">Clic para detalle</span>
+                                  <span>Progreso por Estudiante</span>
+                                  <span className="text-xs font-normal text-slate-500">Clic para ver pendientes</span>
                               </div>
                               <div className="divide-y max-h-96 overflow-y-auto">
                                   {allUsers.map(u => {
@@ -617,12 +701,16 @@ export default function App() {
                                       const userReadIds = allCompletions
                                         .filter(c => c.userId === u.uid && validReadingIds.has(c.readingId))
                                         .map(c => c.readingId);
+                                      
                                       const pendingReadings = allReadings.filter(r => !userReadIds.includes(r.id));
                                       const isExpanded = expandedStatItem === u.id;
                                       
                                       return (
                                           <div key={u.id}>
-                                              <div className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer" onClick={() => setExpandedStatItem(isExpanded ? null : u.id)}>
+                                              <div 
+                                                className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
+                                                onClick={() => setExpandedStatItem(isExpanded ? null : u.id)}
+                                              >
                                                   <div className="flex items-center gap-3">
                                                       <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
                                                       <div>
@@ -638,7 +726,7 @@ export default function App() {
                                               </div>
                                               {isExpanded && (
                                                   <div className="bg-red-50 p-3 border-t border-red-100 text-xs">
-                                                      <div className="font-bold text-red-600 mb-2 flex items-center gap-1"><AlertCircle size={12}/> Pendientes:</div>
+                                                      <div className="font-bold text-red-600 mb-2 flex items-center gap-1"><AlertCircle size={12}/> Lecturas Pendientes:</div>
                                                       {pendingReadings.length > 0 ? (
                                                           <ul className="space-y-1 pl-4 list-disc text-slate-600">
                                                               {pendingReadings.slice(0, 10).map(r => (
@@ -662,9 +750,13 @@ export default function App() {
                                       const readers = allCompletions.filter(c => c.readingId === r.id).map(c => c.userId);
                                       const missingUsers = allUsers.filter(u => !readers.includes(u.uid));
                                       const isExpanded = expandedStatItem === r.id;
+                                      
                                       return (
                                           <div key={r.id}>
-                                              <div className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer" onClick={() => setExpandedStatItem(isExpanded ? null : r.id)}>
+                                              <div 
+                                                className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
+                                                onClick={() => setExpandedStatItem(isExpanded ? null : r.id)}
+                                              >
                                                   <div className="flex-1">
                                                       <div className="text-sm font-bold text-slate-700">{r.scripture || r.title}</div>
                                                       <div className="text-xs text-slate-400">{r.date}</div>
@@ -672,7 +764,9 @@ export default function App() {
                                                   <div className="flex items-center gap-3">
                                                       <div className="text-right">
                                                           <div className="text-xs font-bold text-slate-600">{readers.length} / {allUsers.length}</div>
-                                                          <div className="w-20 bg-slate-100 rounded-full h-1.5 mt-1"><div className="bg-sky-500 h-1.5 rounded-full" style={{ width: `${allUsers.length ? (readers.length/allUsers.length)*100 : 0}%` }}></div></div>
+                                                          <div className="w-20 bg-slate-100 rounded-full h-1.5 mt-1">
+                                                              <div className="bg-sky-500 h-1.5 rounded-full" style={{ width: `${(readers.length/allUsers.length)*100}%` }}></div>
+                                                          </div>
                                                       </div>
                                                       <ChevronDown size={16} className={`text-slate-400 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
                                                   </div>
@@ -720,7 +814,7 @@ export default function App() {
                   <div className="flex items-center justify-between mb-4">
                       <h3 className="font-bold font-serif text-lg flex items-center gap-2"><Activity size={20}/> Mis Logros</h3>
                       <div className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
-                          <Flame size={14}/> {streak}
+                          <Flame size={14}/> {streak} días racha
                       </div>
                   </div>
                   <div className="grid grid-cols-6 gap-2 text-center">
@@ -762,17 +856,23 @@ export default function App() {
                               const isRead = completionsMap[r.id];
                               const comments = commentsMap[r.id] || [];
                               const showComments = activeReadingIdForComment === r.id;
-                              
+                              const isNewReading = isNew(r.createdAt);
+
                               return (
                                   <Card key={r.id} className="overflow-hidden">
                                       <div className={`p-4 flex justify-between items-start ${r.type==='bible'?'bg-white border-l-4 border-sky-500':'bg-white border-l-4 border-amber-400'}`}>
                                           <div className="flex-1">
-                                              <span className={`text-[10px] font-bold uppercase tracking-widest mb-1 block ${r.type==='bible'?'text-sky-500':'text-amber-600'}`}>{r.type==='bible'?'Bíblica':'Externo'}</span>
+                                              <div className="flex gap-2 mb-1">
+                                                <span className={`text-[10px] font-bold uppercase tracking-widest block ${r.type==='bible'?'text-sky-500':'text-amber-600'}`}>{r.type==='bible'?'Bíblica':'Externo'}</span>
+                                                {isNewReading && <Badge color="red">NUEVO</Badge>}
+                                              </div>
                                               <h3 className="text-lg font-bold text-slate-800">{r.scripture}</h3>
                                               {r.title && <p className="text-sm text-slate-500">{r.title}</p>}
+                                              
                                               {r.type === 'external' && r.externalLink && (
                                                   <a href={r.externalLink} target="_blank" className="mt-2 inline-flex items-center gap-1 text-xs text-sky-600 font-bold hover:underline border px-2 py-1 rounded bg-sky-50 border-sky-100"><LinkIcon size={12}/> Ver Recurso</a>
                                               )}
+                                              
                                               {r.observation && (
                                                   <div className="mt-3 bg-slate-50 p-3 rounded text-sm text-slate-600 italic border-l-2 border-slate-300">
                                                       <span className="not-italic font-bold text-xs text-slate-400 block mb-1">Observación:</span>
@@ -784,22 +884,59 @@ export default function App() {
                                               {isRead ? <CheckCircle size={24} fill="currentColor" className="text-emerald-100"/> : <div className="w-6 h-6 rounded-full border-2 border-slate-300"></div>}
                                           </button>
                                       </div>
+                                      
+                                      {/* Comentarios Mini - MODIFICADO A BOTÓN GRANDE */}
                                       <div className="bg-slate-50/50 border-t p-2">
-                                          <button onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)} className={`flex items-center gap-2 px-4 py-2 rounded-lg w-full justify-center text-sm font-medium transition-colors ${showComments ? 'bg-slate-200 text-slate-800' : 'bg-sky-50 text-sky-600 hover:bg-sky-100'}`}>
-                                              <MessageSquare size={18} /> {comments.length > 0 ? `Ver ${comments.length} Comentarios` : 'Escribir un comentario'} <ChevronDown size={16} className={`ml-auto transform transition-transform duration-200 ${showComments ? 'rotate-180' : ''}`} />
+                                          <button 
+                                              onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)}
+                                              className={`flex items-center gap-2 px-4 py-2 rounded-lg w-full justify-center text-sm font-medium transition-colors ${
+                                                  showComments 
+                                                  ? 'bg-slate-200 text-slate-800' 
+                                                  : 'bg-sky-50 text-sky-600 hover:bg-sky-100'
+                                              }`}
+                                          >
+                                              <MessageSquare size={18} />
+                                              {comments.length > 0 ? `Ver ${comments.length} Comentarios` : 'Escribir un comentario'}
+                                              <ChevronDown 
+                                                  size={16} 
+                                                  className={`ml-auto transform transition-transform duration-200 ${showComments ? 'rotate-180' : ''}`} 
+                                              />
                                           </button>
-                                          {r.externalContent && !showComments && <div className="text-center mt-2 text-xs text-slate-400 flex justify-center gap-1"><FileText size={12}/> Incluye contenido de lectura</div>}
+                                          
+                                          {r.externalContent && !showComments && (
+                                             <div className="text-center mt-2 text-xs text-slate-400 flex justify-center gap-1">
+                                                <FileText size={12}/> Incluye contenido de lectura
+                                             </div>
+                                          )}
                                       </div>
+
+                                      {/* Área Expandible */}
                                       {showComments && (
                                           <div className="p-4 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top-1">
-                                              {r.externalContent && <div className="mb-4 p-3 bg-white rounded border text-sm text-slate-700 max-h-40 overflow-y-auto shadow-sm">{r.externalContent}</div>}
+                                              {r.externalContent && (
+                                                  <div className="mb-4 p-3 bg-white rounded border text-sm text-slate-700 max-h-40 overflow-y-auto shadow-sm">
+                                                      {r.externalContent}
+                                                  </div>
+                                              )}
+                                              
                                               <div className="space-y-3 mb-3">
                                                   {comments.map(c => (
-                                                      <div key={c.id} className="flex gap-2 items-start"><img src={c.userPhoto} className="w-6 h-6 rounded-full mt-1"/><div className="bg-white p-2 rounded-r-lg rounded-bl-lg border text-sm flex-1"><div className="font-bold text-xs text-slate-700">{c.userName}</div><p className="text-slate-600">{c.text}</p></div></div>
+                                                      <div key={c.id} className="flex gap-2 items-start">
+                                                          <img src={c.userPhoto} className="w-6 h-6 rounded-full mt-1"/>
+                                                          <div className="bg-white p-2 rounded-r-lg rounded-bl-lg border text-sm flex-1">
+                                                              <div className="font-bold text-xs text-slate-700">{c.userName}</div>
+                                                              <p className="text-slate-600">{c.text}</p>
+                                                          </div>
+                                                      </div>
                                                   ))}
-                                                  {comments.length === 0 && <p className="text-center text-xs text-slate-400 italic py-2">Sé el primero en compartir tu reflexión.</p>}
+                                                  {comments.length === 0 && (
+                                                      <p className="text-center text-xs text-slate-400 italic py-2">Sé el primero en compartir tu reflexión.</p>
+                                                  )}
                                               </div>
-                                              <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2"><input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe..." value={commentText} onChange={e=>setCommentText(e.target.value)}/><button type="submit" disabled={!commentText.trim()} className="text-sky-500 hover:bg-sky-100 p-2 rounded"><Send size={16}/></button></form>
+                                              <form onSubmit={e=>postComment(e,r.id)} className="flex gap-2">
+                                                  <input className="flex-1 p-2 border rounded text-sm" placeholder="Escribe..." value={commentText} onChange={e=>setCommentText(e.target.value)}/>
+                                                  <button type="submit" disabled={!commentText.trim()} className="text-sky-500 hover:bg-sky-100 p-2 rounded"><Send size={16}/></button>
+                                              </form>
                                           </div>
                                       )}
                                   </Card>
