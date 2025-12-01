@@ -30,7 +30,7 @@ import {
   PlusCircle, BarChart2, Edit3, Save, ChevronDown, Youtube, ScrollText, 
   ArrowRight, ExternalLink, Shield, ShieldAlert, ShieldCheck, Bell, X, 
   AlertTriangle, FileText, Link as LinkIcon, Clock, CheckSquare, Activity, Book,
-  Flame, Award, Crown, Star, Medal, Zap, MessageCircle, AlertCircle, Lock
+  Flame, Award, Crown, Star, Medal, Zap, MessageCircle, AlertCircle, Lock, LockKeyhole
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE (PRODUCCIÓN) ---
@@ -75,7 +75,7 @@ const BIBLE_STRUCTURE = {
 };
 const BIBLE_BOOKS_ORDER = Object.keys(BIBLE_STRUCTURE);
 
-// --- Configuración de Insignias ---
+// --- Configuración de Insignias (ACTUALIZADO) ---
 const BADGES = [
   { days: 7, label: "1 Semana", icon: Star, color: "text-yellow-500", bg: "bg-yellow-100" },
   { days: 30, label: "1 Mes", icon: Medal, color: "text-blue-500", bg: "bg-blue-100" },
@@ -92,6 +92,15 @@ const getLocalDate = () => {
     const month = String(d.getMonth() + 1).padStart(2, '0');
     const day = String(d.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+};
+
+const getPrevDateStr = (dateStr) => {
+   const d = new Date(dateStr + 'T12:00:00'); 
+   d.setDate(d.getDate() - 1);
+   const year = d.getFullYear();
+   const month = String(d.getMonth() + 1).padStart(2, '0');
+   const day = String(d.getDate()).padStart(2, '0');
+   return `${year}-${month}-${day}`;
 };
 
 // --- Componentes ---
@@ -278,7 +287,7 @@ export default function App() {
     });
   }, [userData]);
 
-  // Leer Comentarios (CORREGIDO)
+  // Leer Comentarios
   useEffect(() => {
     if (!userData?.isApproved || allReadings.length === 0) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'comments'), orderBy('createdAt', 'desc'));
@@ -290,104 +299,63 @@ export default function App() {
             newMap[d.readingId].push({id: doc.id, ...d});
         });
         setCommentsMap(newMap);
-    }, (e) => {
-        if (e.code === 'failed-precondition') {
-             const q2 = query(collection(db, 'artifacts', APP_ID, 'comments'));
-             onSnapshot(q2, (snap) => {
-                const newMap = {};
-                snap.docs.forEach(doc => {
-                    const d = doc.data();
-                    if (!newMap[d.readingId]) newMap[d.readingId] = [];
-                    newMap[d.readingId].push({id: doc.id, ...d});
-                });
-                 Object.keys(newMap).forEach(k => {
-                     newMap[k].sort((a,b) => (b.createdAt?.seconds||0) - (a.createdAt?.seconds||0));
-                 });
-                 setCommentsMap(newMap);
-             });
-        }
-    });
+    }, () => {}); 
   }, [userData, allReadings]); 
 
-  // Leer Progreso Personal y Racha
+  // Leer Progreso Personal
   useEffect(() => {
-    if (!activeUid || allReadings.length === 0) return;
+    if (!activeUid) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
     return onSnapshot(q, (snapshot) => {
         const map = {};
-        const userCompletedReadings = new Set(); // IDs de lecturas completadas
+        const dates = new Set();
         
+        const validReadingIds = new Set(allReadings.map(r => r.id));
+
         snapshot.docs.forEach(doc => {
             const data = doc.data();
-            map[data.readingId] = true;
-            userCompletedReadings.add(data.readingId);
+            if (validReadingIds.has(data.readingId)) {
+                map[data.readingId] = true;
+                if (data.completedAt) {
+                    const dateStr = new Date(data.completedAt.seconds * 1000).toISOString().split('T')[0];
+                    dates.add(dateStr);
+                }
+            }
         });
         setCompletionsMap(map);
         
-        // --- CALCULO DE RACHA ESTRICTO ---
-        // 1. Agrupar lecturas requeridas por fecha
-        const requiredByDate = {};
-        allReadings.forEach(r => {
-            if (!requiredByDate[r.date]) requiredByDate[r.date] = [];
-            requiredByDate[r.date].push(r.id);
-        });
-
-        // 2. Verificar días completados al 100%
-        const completedDates = new Set();
-        Object.keys(requiredByDate).forEach(date => {
-            const readingIds = requiredByDate[date];
-            // Si todas las lecturas de ese día están en userCompletedReadings
-            const isDayComplete = readingIds.every(id => userCompletedReadings.has(id));
-            if (isDayComplete) {
-                completedDates.add(date);
-            }
-        });
-
-        // 3. Contar hacia atrás
+        // Racha
         let currentStreak = 0;
-        let checkDate = new Date(); 
         const today = getLocalDate();
+        const yesterday = getPrevDateStr(today);
+        let checkDate = new Date();
         
-        // Ajustar checkDate para comparar strings
-        let pointerDate = new Date(today + 'T12:00:00'); // Usar medio día para evitar saltos de zona
-        
-        // Si hoy no está completo, empezamos a chequear desde ayer
-        if (!completedDates.has(today)) {
-            pointerDate.setDate(pointerDate.getDate() - 1);
-            const yesterdayStr = pointerDate.toISOString().split('T')[0];
-            if (!completedDates.has(yesterdayStr)) {
-                setStreak(0);
-                return;
-            }
+        if (!dates.has(today)) {
+             if (!dates.has(yesterday)) { setStreak(0); return; }
+             checkDate = new Date(Date.now() - 86400000);
         }
-
-        // Loop
         while (true) {
-            const dateStr = pointerDate.toISOString().split('T')[0];
-            if (completedDates.has(dateStr)) {
+            const dateStr = checkDate.toISOString().split('T')[0];
+            if (dates.has(dateStr)) {
                 currentStreak++;
-                pointerDate.setDate(pointerDate.getDate() - 1);
+                checkDate.setDate(checkDate.getDate() - 1);
             } else {
                 break;
             }
         }
         setStreak(currentStreak);
-
     });
   }, [activeUid, allReadings]);
 
   // Admin Stats
   useEffect(() => {
     if (userData?.role !== 'admin') return;
-    
     const unsubUsers = onSnapshot(collection(db, 'artifacts', APP_ID, 'users'), s => {
         setAllUsers(s.docs.map(d => ({id: d.id, ...d.data()})));
     });
-
     const unsubStats = onSnapshot(collection(db, 'artifacts', APP_ID, 'completions'), s => {
         setAllCompletions(s.docs.map(d => d.data()));
     });
-
     return () => { unsubUsers(); unsubStats(); };
   }, [userData]);
 
@@ -408,7 +376,7 @@ export default function App() {
       if (!activeUid) return;
       const isComplete = completionsMap[readingId];
       
-      // CONFIRMACIÓN RESTAURADA
+      // CONFIRMACIÓN
       const msg = isComplete 
         ? "¿Deseas desmarcar esta lectura? Se restará de tu progreso diario." 
         : "Confirma que has leído y estudiado el material asignado.";
@@ -451,7 +419,6 @@ export default function App() {
       }
       await addDoc(collection(db, 'artifacts', APP_ID, 'readings'), data);
       
-      // Reset
       setNewReading({ 
         type: 'bible', date: date, 
         title: '', startBook: 'Romanos', startChapter: '1', endBook: 'Romanos', endChapter: '1', verses: '', 
@@ -734,7 +701,7 @@ export default function App() {
                                                               ))}
                                                               {pendingReadings.length > 10 && <li>...y {pendingReadings.length - 10} más</li>}
                                                           </ul>
-                                                      ) : <p className="text-emerald-600 italic flex items-center gap-1"><CheckCircle size={12}/> ¡Al día!</p>}
+                                                      ) : <p className="text-emerald-600 italic flex items-center gap-1"><CheckCircle size={12}/> ¡Está al día!</p>}
                                                   </div>
                                               )}
                                           </div>
@@ -774,15 +741,19 @@ export default function App() {
                                               {isExpanded && (
                                                   <div className="bg-slate-50 p-3 border-t text-xs flex gap-4">
                                                       <div className="flex-1">
-                                                          <div className="font-bold text-emerald-600 mb-1">Completado:</div>
+                                                          <div className="font-bold text-emerald-600 mb-1">Completado por:</div>
                                                           <div className="flex flex-wrap gap-1">
-                                                              {allUsers.filter(u => readers.includes(u.uid)).map(u => <span key={u.id} className="bg-white border border-emerald-100 px-2 py-0.5 rounded text-emerald-700">{u.displayName}</span>)}
+                                                              {allUsers.filter(u => readers.includes(u.uid)).map(u => (
+                                                                  <span key={u.id} className="bg-white border border-emerald-100 px-2 py-0.5 rounded text-emerald-700">{u.displayName}</span>
+                                                              ))}
                                                           </div>
                                                       </div>
                                                       <div className="flex-1 border-l pl-4 border-slate-200">
-                                                          <div className="font-bold text-red-500 mb-1">Falta:</div>
+                                                          <div className="font-bold text-red-500 mb-1">Pendiente:</div>
                                                           <div className="flex flex-wrap gap-1">
-                                                              {missingUsers.map(u => <span key={u.id} className="bg-white border border-red-100 px-2 py-0.5 rounded text-red-600">{u.displayName}</span>)}
+                                                              {missingUsers.map(u => (
+                                                                  <span key={u.id} className="bg-white border border-red-100 px-2 py-0.5 rounded text-red-600">{u.displayName}</span>
+                                                              ))}
                                                           </div>
                                                       </div>
                                                   </div>
@@ -846,13 +817,20 @@ export default function App() {
                       <p>No hay lecturas {userFilter === 'pending' ? 'pendientes' : 'completadas'}.</p>
                   </div>
               ) : (
-                  sortedDates.map(date => (
+                  sortedDates.map(date => {
+                      const dayReadings = groupedReadings[date];
+                      // Verificar si todas las lecturas de este día están completas (para el check general del día)
+                      const isDayFullyComplete = dayReadings.every(r => completionsMap[r.id]);
+
+                      return (
                       <div key={date} className="space-y-3">
                           <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-wider px-2">
                               <Calendar size={14}/> {date === getLocalDate() ? 'Hoy' : new Date(date + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
                               <div className="h-px bg-slate-200 flex-1"></div>
+                              {isDayFullyComplete && <CheckCircle size={14} className="text-emerald-500"/>}
                           </div>
-                          {groupedReadings[date].map(r => {
+                          
+                          {dayReadings.map(r => {
                               const isRead = completionsMap[r.id];
                               const comments = commentsMap[r.id] || [];
                               const showComments = activeReadingIdForComment === r.id;
@@ -943,7 +921,7 @@ export default function App() {
                               );
                           })}
                       </div>
-                  ))
+                  ));
               )}
           </main>
       </div>
