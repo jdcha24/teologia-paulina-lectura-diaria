@@ -149,6 +149,7 @@ export default function App() {
   
   // Gamificación
   const [streak, setStreak] = useState(0);
+  const [progressPercent, setProgressPercent] = useState(0);
 
   // Estado de UI Usuario
   const [userFilter, setUserFilter] = useState('pending'); 
@@ -302,13 +303,14 @@ export default function App() {
     }, () => {}); 
   }, [userData, allReadings]); 
 
-  // Leer Progreso Personal
+  // Leer Progreso Personal y Racha
   useEffect(() => {
     if (!activeUid) return;
     const q = query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', activeUid));
     return onSnapshot(q, (snapshot) => {
         const map = {};
         const dates = new Set();
+        let completedCount = 0;
         
         const validReadingIds = new Set(allReadings.map(r => r.id));
 
@@ -316,13 +318,18 @@ export default function App() {
             const data = doc.data();
             if (validReadingIds.has(data.readingId)) {
                 map[data.readingId] = true;
+                completedCount++;
                 if (data.completedAt) {
-                    const dateStr = new Date(data.completedAt.seconds * 1000).toISOString().split('T')[0];
+                    const dateStr = new Date(data.completedAt.seconds * 1000).toLocaleDateString("en-CA"); // YYYY-MM-DD local
                     dates.add(dateStr);
                 }
             }
         });
         setCompletionsMap(map);
+        
+        // Calcular % Anual (365 lecturas base)
+        const percent = Math.min(100, Math.round((completedCount / 365) * 100));
+        setProgressPercent(percent);
         
         // Racha
         let currentStreak = 0;
@@ -515,11 +522,17 @@ export default function App() {
               <span className="hidden sm:inline">Teología Paulina</span>
           </div>
           <div className="flex gap-3 items-center">
-              {streak > 0 && (
-                  <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-full border border-amber-100" title={`${streak} días seguidos`}>
-                      <Flame size={16} className="text-amber-500 fill-amber-500" /><span className="text-xs font-bold text-amber-600">{streak}</span>
+              {/* BARRA DE PROGRESO RESTAURADA EN HEADER */}
+              <div className="hidden md:flex flex-col items-end mr-2 min-w-[120px]">
+                  <div className="flex justify-between w-full text-[10px] font-bold uppercase text-slate-400 mb-1">
+                      <span>Biblia Leída</span>
+                      <span>{progressPercent}%</span>
                   </div>
-              )}
+                  <div className="w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                      <div className="bg-emerald-500 h-full transition-all duration-1000" style={{width: `${progressPercent}%`}}></div>
+                  </div>
+              </div>
+              
               <a href={YOUTUBE_CHANNEL} target="_blank" rel="noopener noreferrer" className="p-2 text-red-600 hover:bg-red-50 rounded-full transition-colors" title="YouTube"><Youtube size={24} /></a>
               {userData?.role === 'admin' && (
                   <div className="flex bg-slate-100 p-1 rounded">
@@ -854,6 +867,7 @@ export default function App() {
                                           </button>
                                       </div>
                                       
+                                      {/* Comentarios Mini - MODIFICADO A BOTÓN GRANDE */}
                                       <div className="bg-slate-50/50 border-t p-2">
                                           <button 
                                               onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)}
@@ -878,6 +892,7 @@ export default function App() {
                                           )}
                                       </div>
 
+                                      {/* Área Expandible */}
                                       {showComments && (
                                           <div className="p-4 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top-1">
                                               {r.externalContent && (
