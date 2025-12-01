@@ -51,6 +51,7 @@ const APP_ID = 'teologia-paulina-app';
 const LOGO_URL = "https://i.postimg.cc/DwmFG9gG/Logo-TP.jpg";
 const FAVICON_URL = "https://i.postimg.cc/DwmFG9gG/Logo-TP.jpg";
 const YOUTUBE_CHANNEL = "https://youtube.com/@teologiapaulina?si=5gwOAmgbXHh1hbgc";
+const APP_URL = "https://teologia-paulina-lectura-diaria.vercel.app/";
 
 // --- Estructura Bíblica ---
 const BIBLE_STRUCTURE = {
@@ -224,11 +225,10 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
   };
 
   const sendWhatsAppNotification = (day, content) => {
-      const link = "https://teologia-paulina-app.vercel.app";
       let msg = `*Plan Bíblico Diario*\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Lectura:* ${day.corePassage}`;
       if (content?.observation) msg += `\n\n💬 *Pastoral:* _"${content.observation}"_`;
       if (content?.extraReadings?.length > 0) msg += `\n\n➕ *Material Extra:* ${content.extraReadings.length} recursos disponibles.`;
-      msg += `\n\n🔗 *Reporta el Cumplimiento:* ${link}`;
+      msg += `\n\n🔗 *Reporta el Cumplimiento:* ${APP_URL}`;
       window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
@@ -669,10 +669,9 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
   };
 
   const sendWhatsAppNotification = (day) => {
-      const link = "https://teologia-paulina-app.vercel.app";
       let msg = `*Plan Bíblico Diario*\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Lectura:* ${day.corePassage}`;
       if (day.observation) msg += `\n\n💬 *Pastoral:* _"${day.observation}"_`;
-      msg += `\n\n🔗 *Reporta el Cumplimiento:* ${link}`;
+      msg += `\n\n🔗 *Reporta el Cumplimiento:* ${APP_URL}`;
       window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
