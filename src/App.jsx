@@ -971,7 +971,7 @@ export default function App() {
     manifestLink.rel = 'manifest';
     manifestLink.href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify({
         "name": "Teología Paulina",
-        "short_name": "Teología",
+        "short_name": "Teología Paulina",
         "start_url": ".",
         "display": "standalone",
         "theme_color": "#0ea5e9",
