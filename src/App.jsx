@@ -28,7 +28,8 @@ import {
   BarChart2, Edit3, ChevronDown, Youtube, ScrollText, 
   Shield, ShieldCheck, Bell, X, 
   AlertTriangle, FileText, Link as LinkIcon, Activity,
-  Flame, Award, Crown, Star, Medal, Lock, Percent, MessageCircle, ToggleLeft, ToggleRight, Plus, Trash2
+  Flame, Award, Crown, Star, Medal, Lock, Percent, MessageCircle, ToggleLeft, ToggleRight, Plus, Trash2,
+  AlertCircle
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE ---
@@ -218,6 +219,12 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
 
   const updateUserStatus = async (uid, field, value) => {
       await updateDoc(doc(db, 'artifacts', APP_ID, 'users', uid), { [field]: value });
+  };
+
+  // Función toggle para expandir estadísticas
+  const toggleStatExpand = (id) => {
+    if (expandedStatItem === id) setExpandedStatItem(null);
+    else setExpandedStatItem(id);
   };
 
   return (
@@ -413,26 +420,57 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
 
                 {statsMode === 'byUser' ? (
                     <Card className="overflow-hidden">
-                        <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Progreso por Usuario (Base 365 días)</div>
+                        <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm flex justify-between items-center">
+                            <span>Progreso por Usuario (Base 365 días)</span>
+                            <span className="text-xs font-normal text-slate-500">Clic para ver pendientes</span>
+                        </div>
                         <div className="divide-y max-h-96 overflow-y-auto">
                             {allUsers.map(u => {
                                 const userReadIds = allCompletions.filter(c => c.userId === u.uid).map(c => c.readingId);
                                 const count = userReadIds.length;
                                 const percent = Math.min(100, Math.round((count / 365) * 100));
+                                const isExpanded = expandedStatItem === u.id;
                                 
+                                // Calcular pendientes hasta HOY
+                                const todayStr = getLocalDate();
+                                const pendingReadings = staticPlan.filter(day => {
+                                    return day.date <= todayStr && !userReadIds.includes(day.id);
+                                });
+
                                 return (
-                                    <div key={u.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
-                                        <div className="flex items-center gap-3">
-                                            <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
-                                            <div>
-                                                <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
-                                                <div className="text-xs text-slate-400">{count} días completados</div>
+                                    <div key={u.id}>
+                                        <div 
+                                            className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
+                                            onClick={() => toggleStatExpand(u.id)}
+                                        >
+                                            <div className="flex items-center gap-3">
+                                                <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
+                                                <div>
+                                                    <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
+                                                    <div className="text-xs text-slate-400">{count} días completados</div>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs font-bold text-slate-600">{percent}%</span>
+                                                <div className="w-16 h-1.5 bg-slate-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{width:`${percent}%`}}></div></div>
+                                                <ChevronDown size={16} className={`text-slate-400 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
                                             </div>
                                         </div>
-                                        <div className="flex items-center gap-2">
-                                           <span className="text-xs font-bold text-slate-600">{percent}%</span>
-                                           <div className="w-16 h-1.5 bg-slate-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{width:`${percent}%`}}></div></div>
-                                        </div>
+                                        {isExpanded && (
+                                            <div className="bg-red-50 p-3 text-xs border-t border-red-100">
+                                                <div className="font-bold text-red-700 mb-2 flex items-center gap-1"><AlertCircle size={12}/> Lecturas Pendientes ({pendingReadings.length})</div>
+                                                {pendingReadings.length === 0 ? (
+                                                    <div className="text-emerald-600 font-bold">¡Está al día!</div>
+                                                ) : (
+                                                    <ul className="grid grid-cols-2 gap-1 text-slate-600">
+                                                        {pendingReadings.slice(0, 20).map(r => (
+                                                            <li key={r.id} className="truncate">• {r.displayDate}: {r.corePassage}</li>
+                                                        ))}
+                                                        {pendingReadings.length > 20 && <li className="text-red-400 font-bold">... y {pendingReadings.length - 20} más.</li>}
+                                                    </ul>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}
@@ -440,27 +478,62 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                     </Card>
                 ) : (
                     <Card className="overflow-hidden">
-                        <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Estado por Lectura</div>
+                        <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm flex justify-between items-center">
+                            <span>Estado por Lectura</span>
+                            <span className="text-xs font-normal text-slate-500">Clic para ver faltantes</span>
+                        </div>
                         <div className="divide-y max-h-96 overflow-y-auto">
                             {staticPlan.map(day => {
-                                const readers = allCompletions.filter(c => c.readingId === day.id);
+                                const readers = allCompletions.filter(c => c.readingId === day.id).map(c => c.userId);
                                 const count = readers.length;
                                 const percent = Math.round((count / Math.max(1, allUsers.length)) * 100);
+                                const isExpanded = expandedStatItem === day.id;
+
+                                // Calcular usuarios faltantes
+                                const missingUsers = allUsers.filter(u => !readers.includes(u.uid));
 
                                 return (
-                                    <div key={day.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
-                                        <div className="flex-1">
-                                            <div className="text-sm font-bold text-slate-700">{day.corePassage}</div>
-                                            <div className="text-xs text-slate-400">{day.displayDate}</div>
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                            <div className="text-right">
-                                                <div className="text-xs font-bold text-slate-600">{count} / {allUsers.length}</div>
-                                                <div className="w-20 bg-slate-100 rounded-full h-1.5 mt-1">
-                                                    <div className="bg-sky-500 h-1.5 rounded-full" style={{ width: `${percent}%` }}></div>
+                                    <div key={day.id}>
+                                        <div 
+                                            className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
+                                            onClick={() => toggleStatExpand(day.id)}
+                                        >
+                                            <div className="flex-1">
+                                                <div className="text-sm font-bold text-slate-700">{day.corePassage}</div>
+                                                <div className="text-xs text-slate-400">{day.displayDate}</div>
+                                            </div>
+                                            <div className="flex items-center gap-3">
+                                                <div className="text-right">
+                                                    <div className="text-xs font-bold text-slate-600">{count} / {allUsers.length}</div>
+                                                    <div className="w-20 bg-slate-100 rounded-full h-1.5 mt-1">
+                                                        <div className="bg-sky-500 h-1.5 rounded-full" style={{ width: `${percent}%` }}></div>
+                                                    </div>
                                                 </div>
+                                                <ChevronDown size={16} className={`text-slate-400 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
                                             </div>
                                         </div>
+                                        {isExpanded && (
+                                            <div className="bg-slate-50 p-3 text-xs border-t">
+                                                <div className="flex gap-4">
+                                                    <div className="flex-1">
+                                                        <div className="font-bold text-emerald-600 mb-1">Completado ({count})</div>
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {allUsers.filter(u => readers.includes(u.uid)).map(u => (
+                                                                <span key={u.id} className="bg-white border border-emerald-100 px-1.5 py-0.5 rounded text-emerald-700">{u.displayName.split(' ')[0]}</span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex-1 border-l pl-4 border-slate-200">
+                                                        <div className="font-bold text-red-500 mb-1">Pendiente ({missingUsers.length})</div>
+                                                        <div className="flex flex-wrap gap-1">
+                                                            {missingUsers.map(u => (
+                                                                <span key={u.id} className="bg-white border border-red-100 px-1.5 py-0.5 rounded text-red-600">{u.displayName.split(' ')[0]}</span>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}
@@ -548,24 +621,34 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
             </div>
         </Card>
 
-        {/* PROGRESO ANUAL */}
-        <Card className="p-5 bg-white border-none shadow-md relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-1 bg-slate-100">
-                <div className="h-full bg-gradient-to-r from-sky-500 to-emerald-500 transition-all duration-1000" style={{width: `${bibleProgress}%`}}></div>
-            </div>
-            <div className="flex items-center justify-between mb-2 mt-2">
+        {/* PROGRESO ANUAL - DISEÑO MEJORADO */}
+        <Card className="p-6 bg-white border-none shadow-lg relative overflow-hidden ring-4 ring-sky-50">
+            <div className="flex items-center justify-between mb-4">
                 <div className="flex flex-col">
                     <span className="text-xs uppercase text-slate-400 font-bold tracking-wider">Mi Progreso Anual</span>
-                    <span className="text-2xl font-black text-slate-800 flex items-baseline gap-1">
+                    <span className="text-3xl font-black text-slate-800 flex items-baseline gap-1">
                         {bibleProgress}<span className="text-sm text-slate-400">%</span>
                     </span>
                 </div>
-                <div className="bg-sky-50 p-2 rounded-lg">
-                   <BookOpen size={24} className="text-sky-600"/>
+                <div className="bg-sky-100 p-3 rounded-xl">
+                   <BookOpen size={28} className="text-sky-600"/>
                 </div>
             </div>
-            <p className="text-xs text-slate-500">
-                Has completado {Object.keys(completionsMap).length} de 365 días del plan.
+            
+            {/* Barra más grande y llamativa */}
+            <div className="w-full h-6 bg-slate-100 rounded-full overflow-hidden shadow-inner relative">
+                <div 
+                    className="h-full bg-gradient-to-r from-sky-400 via-sky-500 to-emerald-500 transition-all duration-1000 ease-out flex items-center justify-end pr-2" 
+                    style={{width: `${bibleProgress}%`}}
+                >
+                    {bibleProgress > 5 && <span className="text-[10px] font-bold text-white drop-shadow-md">{bibleProgress}%</span>}
+                </div>
+                {/* Patrón de líneas decorativas opcionales para efecto de 'velocidad/progreso' */}
+                <div className="absolute top-0 left-0 w-full h-full opacity-10" style={{backgroundImage: 'linear-gradient(45deg,rgba(255,255,255,.15) 25%,transparent 25%,transparent 50%,rgba(255,255,255,.15) 50%,rgba(255,255,255,.15) 75%,transparent 75%,transparent)', backgroundSize: '1rem 1rem'}}></div>
+            </div>
+
+            <p className="text-xs text-slate-500 mt-3 text-center">
+                Has completado <span className="font-bold text-slate-700">{Object.keys(completionsMap).length}</span> de 365 días. ¡Sigue así!
             </p>
         </Card>
 
