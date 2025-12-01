@@ -29,7 +29,7 @@ import {
   Shield, ShieldCheck, Bell, X, 
   AlertTriangle, FileText, Link as LinkIcon, Activity,
   Flame, Award, Crown, Star, Medal, Lock, Percent, MessageCircle, ToggleLeft, ToggleRight, Plus, Trash2,
-  AlertCircle
+  AlertCircle, Settings
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE ---
@@ -49,6 +49,7 @@ const db = getFirestore(app);
 
 const APP_ID = 'teologia-paulina-app';
 const LOGO_URL = "https://i.ibb.co/rD9fNMv/1764042450953.png";
+const YOUTUBE_CHANNEL = "https://youtube.com/@teologiapaulina?si=5gwOAmgbXHh1hbgc";
 
 // --- Estructura Bíblica ---
 const BIBLE_STRUCTURE = {
@@ -212,8 +213,11 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
     setEditingDay(null);
   };
 
-  const toggleDayEnabled = async (dayId, currentStatus) => {
-    const docRef = doc(db, 'artifacts', APP_ID, 'daily_content', dayId);
+  const toggleDayEnabled = async (day, currentStatus) => {
+    // REGLA: No deshabilitar días pasados
+    if (day.date < getLocalDate()) return;
+
+    const docRef = doc(db, 'artifacts', APP_ID, 'daily_content', day.id);
     await setDoc(docRef, { isEnabled: !currentStatus }, { merge: true });
   };
 
@@ -226,6 +230,8 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
     if (expandedStatItem === id) setExpandedStatItem(null);
     else setExpandedStatItem(id);
   };
+
+  const todayStr = getLocalDate();
 
   return (
     <div className="max-w-7xl mx-auto p-4 space-y-6">
@@ -301,14 +307,19 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                     <span className="text-sm font-bold text-slate-700">Estado de Publicación</span>
                                     <button 
                                         type="button" 
+                                        disabled={editingDay.date < todayStr}
                                         onClick={()=>setEditForm({...editForm, isEnabled: !editForm.isEnabled})}
-                                        className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${editForm.isEnabled ? 'bg-emerald-500' : 'bg-red-500'}`}
+                                        className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${editForm.isEnabled ? 'bg-emerald-500' : 'bg-red-500'} ${editingDay.date < todayStr ? 'opacity-50 cursor-not-allowed' : ''}`}
                                     >
                                         <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${editForm.isEnabled ? 'translate-x-6' : 'translate-x-1'}`}/>
                                     </button>
                                 </div>
                                 <div className="text-center text-xs font-bold uppercase tracking-wide">
-                                    {editForm.isEnabled ? <span className="text-emerald-600">Visible para Usuarios</span> : <span className="text-red-500">Oculto / Bloqueado</span>}
+                                    {editingDay.date < todayStr ? (
+                                        <span className="text-slate-500">Histórico (Siempre Visible)</span>
+                                    ) : (
+                                        editForm.isEnabled ? <span className="text-emerald-600">Visible para Usuarios</span> : <span className="text-red-500">Oculto / Bloqueado</span>
+                                    )}
                                 </div>
 
                                 <div className="flex gap-2">
@@ -335,17 +346,21 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                 const content = dailyContentMap[day.id] || {};
                                 const isEnabled = content.isEnabled;
                                 const extrasCount = content.extraReadings?.length || 0;
+                                const isPast = day.date < todayStr;
 
                                 return (
                                     <div key={day.id} className={`p-3 flex items-center justify-between hover:bg-slate-50 transition-colors ${editingDay?.id === day.id ? 'bg-sky-50 border-l-4 border-sky-500' : ''}`}>
                                         <div className="flex-1 min-w-0">
                                             <div className="flex items-center gap-2 mb-1">
                                                 <span className="text-xs font-bold text-slate-500 w-12">{day.displayDate}</span>
-                                                {isEnabled ? 
+                                                {isPast ? (
+                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">HISTÓRICO</span> 
+                                                ) : (
+                                                    isEnabled ? 
                                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700"><CheckCircle size={10} className="mr-1"/> ACTIVO</span> 
                                                     : 
                                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-500"><Lock size={10} className="mr-1"/> INACTIVO</span>
-                                                }
+                                                )}
                                             </div>
                                             <div className="font-bold text-slate-800 text-sm">{day.corePassage}</div>
                                             <div className="flex gap-2 mt-1">
@@ -355,8 +370,9 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                         </div>
                                         <div className="flex items-center gap-2">
                                             <button 
-                                                onClick={() => toggleDayEnabled(day.id, isEnabled)}
-                                                className={`p-2 rounded hover:bg-slate-200 ${isEnabled ? 'text-emerald-500' : 'text-red-500'}`}
+                                                onClick={() => toggleDayEnabled(day, isEnabled)}
+                                                disabled={isPast}
+                                                className={`p-2 rounded hover:bg-slate-200 ${isPast ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEnabled ? 'text-emerald-500' : 'text-red-500')}`}
                                             >
                                                 {isEnabled ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}
                                             </button>
@@ -443,12 +459,15 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                             className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer"
                                             onClick={() => toggleStatExpand(u.id)}
                                         >
-                                            <div className="flex items-center gap-3">
-                                                <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
-                                                <div>
-                                                    <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
-                                                    <div className="text-xs text-slate-400">{count} días completados</div>
+                                            <div className="flex-1 flex flex-col">
+                                                <div className="flex items-center gap-3">
+                                                    <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
+                                                    <div>
+                                                        <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
+                                                        <div className="text-xs text-slate-400">{count} días completados</div>
+                                                    </div>
                                                 </div>
+                                                {u.planStartDate && <div className="text-[10px] text-slate-400 mt-1 ml-11">Inicio Plan: {u.planStartDate}</div>}
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <span className="text-xs font-bold text-slate-600">{percent}%</span>
@@ -551,9 +570,18 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
   const [userFilter, setUserFilter] = useState('pending');
   const [activeReadingIdForComment, setActiveReadingIdForComment] = useState(null);
   const [commentText, setCommentText] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
+  const [startDateInput, setStartDateInput] = useState(user.planStartDate || '');
 
   const todayStr = getLocalDate();
   const todayDate = new Date(todayStr + 'T12:00:00');
+
+  // Guardar Fecha de Inicio
+  const saveStartDate = async () => {
+      await updateDoc(doc(db, 'artifacts', APP_ID, 'users', activeUid), { planStartDate: startDateInput });
+      setShowSettings(false);
+      alert("Fecha de inicio actualizada. Tus pendientes se ajustarán a esta fecha.");
+  };
 
   const userPlan = useMemo(() => {
     return staticPlan.map(day => {
@@ -597,6 +625,35 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
 
   return (
     <div className="max-w-3xl mx-auto p-4 space-y-6">
+        
+        {/* CONFIGURACIÓN Y ENCABEZADO */}
+        <div className="flex justify-end">
+            <button onClick={() => setShowSettings(!showSettings)} className="text-slate-400 hover:text-sky-600 flex items-center gap-1 text-xs font-bold">
+                <Settings size={14}/> {showSettings ? 'Cerrar Ajustes' : 'Configurar Plan'}
+            </button>
+        </div>
+
+        {showSettings && (
+            <Card className="p-4 bg-sky-50 border-sky-100 animate-in slide-in-from-top-2">
+                <h4 className="font-bold text-slate-700 mb-2 text-sm">Ajustes de Lectura</h4>
+                <div className="flex flex-col gap-2">
+                    <label className="text-xs text-slate-500">
+                        Fecha de Inicio Personal:
+                        <span className="block text-[10px] text-slate-400 font-normal">Si te uniste tarde, selecciona tu fecha de inicio para ocultar pendientes antiguos.</span>
+                    </label>
+                    <div className="flex gap-2">
+                        <input 
+                            type="date" 
+                            className="p-2 rounded border border-slate-300 text-sm flex-1"
+                            value={startDateInput}
+                            onChange={(e) => setStartDateInput(e.target.value)}
+                        />
+                        <Button onClick={saveStartDate} className="text-xs">Guardar</Button>
+                    </div>
+                </div>
+            </Card>
+        )}
+
         {/* LOGROS Y RACHA */}
         <Card className="p-4 mb-6 bg-gradient-to-r from-sky-600 to-blue-600 text-white border-none shadow-lg">
             <div className="flex items-center justify-between mb-4">
@@ -661,16 +718,45 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
             {userPlan.map((day, index) => {
                 const isComplete = completionsMap[day.id];
                 
+                // --- FILTROS ---
                 if (userFilter === 'completed' && !isComplete) return null;
-                if (userFilter === 'pending' && isComplete) return null;
+                
+                // Filtro especial para pendientes:
+                if (userFilter === 'pending') {
+                    if (isComplete) return null; // Si está completa, no mostrar en pendientes
+                    // Si el usuario tiene fecha de inicio, ocultar lecturas ANTERIORES a esa fecha
+                    if (user.planStartDate && day.date < user.planStartDate) return null;
+                }
 
                 const readingDate = new Date(day.date + 'T12:00:00');
                 const isFuture = readingDate > todayDate;
                 const prevDayId = index > 0 ? userPlan[index-1].id : null;
                 const isSeqLocked = prevDayId && !completionsMap[prevDayId];
                 const isAdminLocked = !day.isEnabled;
-                const isLocked = isFuture || isSeqLocked || isAdminLocked;
-
+                
+                // El bloqueo lógico (candado) sigue aplicando aunque sea un "late joiner" si intenta saltar en el futuro
+                // Pero si está en el pasado (histórico habilitado), no debería bloquearse por "secuencia" si está antes de su fecha de inicio...
+                // Simplificación: Mantener bloqueo secuencial estricto PARA LO QUE VE.
+                // Si ocultamos lo anterior, el 'prevDayId' visible es el anterior visible?
+                // No, el bloqueo secuencial en un plan anual suele ser sobre el día inmediatamente anterior del calendario.
+                // Si ocultamos los días viejos, el usuario verá el primer día de "su plan". Ese primer día debería estar desbloqueado.
+                
+                let isLocked = isFuture || isAdminLocked;
+                
+                // Lógica especial de desbloqueo para Late Joiner:
+                // Si el día es >= planStartDate, y el día anterior es < planStartDate, entonces este es el "primer día" del usuario y no debe bloquearse por secuencia.
+                const isStartDay = user.planStartDate && day.date === user.planStartDate;
+                const prevDayIsBeforeStart = user.planStartDate && prevDayId && userPlan[index-1].date < user.planStartDate;
+                
+                if (!isStartDay && !prevDayIsBeforeStart && !user.planStartDate) {
+                     // Comportamiento normal (sin start date o días posteriores): Bloqueo secuencial normal
+                     if (isSeqLocked) isLocked = true;
+                } else if (user.planStartDate && day.date > user.planStartDate) {
+                     // Si estamos en el plan personalizado, chequear el anterior
+                     if (isSeqLocked) isLocked = true;
+                }
+                
+                // Ocultar futuro lejano en pendientes
                 const diffDays = (readingDate - todayDate) / (1000 * 60 * 60 * 24);
                 if (userFilter === 'pending' && diffDays > 3) return null; 
                 if (isAdminLocked && userFilter === 'pending' && diffDays > 0) return null;
@@ -963,6 +1049,9 @@ export default function App() {
               <span className="hidden sm:inline">Teología Paulina</span>
           </div>
           <div className="flex gap-3 items-center">
+              <a href={YOUTUBE_CHANNEL} target="_blank" rel="noopener noreferrer" className="text-red-600 hover:text-red-700">
+                  <Youtube size={24} />
+              </a>
               {streak > 0 && (
                   <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-full border border-amber-100" title={`${streak} días seguidos`}>
                       <Flame size={16} className="text-amber-500 fill-amber-500" /><span className="text-xs font-bold text-amber-600">{streak}</span>
