@@ -67,6 +67,16 @@ const BIBLE_STRUCTURE = {
   "3 Juan": 1, "Judas": 1, "Apocalipsis": 22
 };
 
+// --- Configuración de Insignias ---
+const BADGES = [
+  { days: 7, label: "1 Semana", icon: Star, color: "text-yellow-500", bg: "bg-yellow-100" },
+  { days: 30, label: "1 Mes", icon: Medal, color: "text-blue-500", bg: "bg-blue-100" },
+  { days: 90, label: "3 Meses", icon: Shield, color: "text-indigo-500", bg: "bg-indigo-100" },
+  { days: 180, label: "Medio Año", icon: ShieldCheck, color: "text-purple-500", bg: "bg-purple-100" },
+  { days: 300, label: "Constancia", icon: Award, color: "text-pink-500", bg: "bg-pink-100" },
+  { days: 365, label: "Biblia Completa", icon: Crown, color: "text-amber-500", bg: "bg-amber-100" },
+];
+
 const generateStaticPlan = () => {
     const plan = [];
     const books = Object.entries(BIBLE_STRUCTURE);
@@ -147,6 +157,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
   const [activeTab, setActiveTab] = useState('reading');
   const [statsMode, setStatsMode] = useState('byUser');
   const [editingDay, setEditingDay] = useState(null);
+  const [expandedStatItem, setExpandedStatItem] = useState(null);
   
   // Estado del formulario de edición
   const [editForm, setEditForm] = useState({ 
@@ -279,15 +290,18 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                     </div>
                                 </div>
 
-                                <div className="flex items-center gap-2 py-2 border-t border-b">
+                                <div className="flex items-center justify-between py-2 border-t border-b bg-slate-50 px-2 rounded">
+                                    <span className="text-sm font-bold text-slate-700">Estado de Publicación</span>
                                     <button 
                                         type="button" 
                                         onClick={()=>setEditForm({...editForm, isEnabled: !editForm.isEnabled})}
-                                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${editForm.isEnabled ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                                        className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${editForm.isEnabled ? 'bg-emerald-500' : 'bg-red-500'}`}
                                     >
-                                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${editForm.isEnabled ? 'translate-x-6' : 'translate-x-1'}`}/>
+                                        <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${editForm.isEnabled ? 'translate-x-6' : 'translate-x-1'}`}/>
                                     </button>
-                                    <span className="text-sm font-bold text-slate-700">{editForm.isEnabled ? 'Habilitado' : 'Oculto'}</span>
+                                </div>
+                                <div className="text-center text-xs font-bold uppercase tracking-wide">
+                                    {editForm.isEnabled ? <span className="text-emerald-600">Visible para Usuarios</span> : <span className="text-red-500">Oculto / Bloqueado</span>}
                                 </div>
 
                                 <div className="flex gap-2">
@@ -323,7 +337,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                                 {isEnabled ? 
                                                     <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700"><CheckCircle size={10} className="mr-1"/> ACTIVO</span> 
                                                     : 
-                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-400"><Lock size={10} className="mr-1"/> INACTIVO</span>
+                                                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-500"><Lock size={10} className="mr-1"/> INACTIVO</span>
                                                 }
                                             </div>
                                             <div className="font-bold text-slate-800 text-sm">{day.corePassage}</div>
@@ -335,7 +349,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                         <div className="flex items-center gap-2">
                                             <button 
                                                 onClick={() => toggleDayEnabled(day.id, isEnabled)}
-                                                className={`p-2 rounded hover:bg-slate-200 text-slate-400 ${isEnabled ? 'text-emerald-500' : ''}`}
+                                                className={`p-2 rounded hover:bg-slate-200 ${isEnabled ? 'text-emerald-500' : 'text-red-500'}`}
                                             >
                                                 {isEnabled ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}
                                             </button>
@@ -391,6 +405,68 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                        <div className="text-xs uppercase text-slate-400 font-bold">Usuarios</div>
                     </Card>
                 </div>
+
+                <div className="flex justify-center gap-4 mb-4">
+                    <button onClick={() => setStatsMode('byUser')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byUser' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Usuario</button>
+                    <button onClick={() => setStatsMode('byReading')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byReading' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Lectura</button>
+                </div>
+
+                {statsMode === 'byUser' ? (
+                    <Card className="overflow-hidden">
+                        <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Progreso por Usuario (Base 365 días)</div>
+                        <div className="divide-y max-h-96 overflow-y-auto">
+                            {allUsers.map(u => {
+                                const userReadIds = allCompletions.filter(c => c.userId === u.uid).map(c => c.readingId);
+                                const count = userReadIds.length;
+                                const percent = Math.min(100, Math.round((count / 365) * 100));
+                                
+                                return (
+                                    <div key={u.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
+                                        <div className="flex items-center gap-3">
+                                            <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
+                                            <div>
+                                                <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
+                                                <div className="text-xs text-slate-400">{count} días completados</div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                           <span className="text-xs font-bold text-slate-600">{percent}%</span>
+                                           <div className="w-16 h-1.5 bg-slate-100 rounded-full"><div className="h-full bg-emerald-500 rounded-full" style={{width:`${percent}%`}}></div></div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </Card>
+                ) : (
+                    <Card className="overflow-hidden">
+                        <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Estado por Lectura</div>
+                        <div className="divide-y max-h-96 overflow-y-auto">
+                            {staticPlan.map(day => {
+                                const readers = allCompletions.filter(c => c.readingId === day.id);
+                                const count = readers.length;
+                                const percent = Math.round((count / Math.max(1, allUsers.length)) * 100);
+
+                                return (
+                                    <div key={day.id} className="p-3 flex items-center justify-between hover:bg-slate-50">
+                                        <div className="flex-1">
+                                            <div className="text-sm font-bold text-slate-700">{day.corePassage}</div>
+                                            <div className="text-xs text-slate-400">{day.displayDate}</div>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <div className="text-right">
+                                                <div className="text-xs font-bold text-slate-600">{count} / {allUsers.length}</div>
+                                                <div className="w-20 bg-slate-100 rounded-full h-1.5 mt-1">
+                                                    <div className="bg-sky-500 h-1.5 rounded-full" style={{ width: `${percent}%` }}></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    </Card>
+                )}
             </div>
         )}
     </div>
@@ -398,7 +474,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
 };
 
 // --- COMPONENTE USER VIEW ---
-const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bibleProgress, user, activeUid }) => {
+const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bibleProgress, streak, user, activeUid }) => {
   const [userFilter, setUserFilter] = useState('pending');
   const [activeReadingIdForComment, setActiveReadingIdForComment] = useState(null);
   const [commentText, setCommentText] = useState('');
@@ -448,6 +524,31 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
 
   return (
     <div className="max-w-3xl mx-auto p-4 space-y-6">
+        {/* LOGROS Y RACHA */}
+        <Card className="p-4 mb-6 bg-gradient-to-r from-sky-600 to-blue-600 text-white border-none shadow-lg">
+            <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold font-serif text-lg flex items-center gap-2"><Activity size={20}/> Mis Logros</h3>
+                <div className="bg-white/20 px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
+                    <Flame size={14}/> {streak} días racha
+                </div>
+            </div>
+            <div className="grid grid-cols-6 gap-2 text-center">
+                {BADGES.map((badge, idx) => {
+                    const isUnlocked = streak >= badge.days;
+                    const Icon = badge.icon;
+                    return (
+                        <div key={idx} className={`flex flex-col items-center p-1 rounded-lg transition-all ${isUnlocked ? 'bg-white/10 opacity-100 scale-105' : 'opacity-40 grayscale'}`}>
+                            <div className={`p-1.5 rounded-full mb-1 bg-white ${badge.color}`}>
+                                <Icon size={16} />
+                            </div>
+                            <span className="text-[9px] font-bold leading-tight">{badge.label}</span>
+                        </div>
+                    )
+                })}
+            </div>
+        </Card>
+
+        {/* PROGRESO ANUAL */}
         <Card className="p-5 bg-white border-none shadow-md relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-slate-100">
                 <div className="h-full bg-gradient-to-r from-sky-500 to-emerald-500 transition-all duration-1000" style={{width: `${bibleProgress}%`}}></div>
@@ -810,6 +911,7 @@ export default function App() {
             completionsMap={completionsMap}
             commentsMap={commentsMap}
             bibleProgress={bibleProgress}
+            streak={streak}
             user={userData}
             activeUid={user.uid}
         />
