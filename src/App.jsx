@@ -799,18 +799,19 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                 
                 let isLocked = isFuture || isAdminLocked;
                 
-                // Lógica especial de desbloqueo para Late Joiner:
-                // Si el día es >= planStartDate, y el día anterior es < planStartDate, entonces este es el "primer día" del usuario y no debe bloquearse por secuencia.
-                const isStartDay = user.planStartDate && day.date === user.planStartDate;
-                const prevDayIsBeforeStart = user.planStartDate && prevDayId && userPlan[index-1].date < user.planStartDate;
-                
-                if (!isStartDay && !prevDayIsBeforeStart && !user.planStartDate) {
-                     // Comportamiento normal (sin start date o días posteriores): Bloqueo secuencial normal
-                     if (isSeqLocked) isLocked = true;
-                } else if (user.planStartDate && day.date > user.planStartDate) {
-                     // Si estamos en el plan personalizado, chequear el anterior
-                     if (isSeqLocked) isLocked = true;
+                // Lógica de Bloqueo Secuencial Inteligente
+                let isPrevComplete = true;
+                if (index > 0) {
+                    const prevDay = userPlan[index - 1];
+                    // Si existe fecha de inicio y el día anterior es previo a esa fecha, ignoramos su estado (se asume completado)
+                    if (user.planStartDate && prevDay.date < user.planStartDate) {
+                        isPrevComplete = true;
+                    } else {
+                        isPrevComplete = !!completionsMap[prevDay.id];
+                    }
                 }
+
+                if (!isPrevComplete) isLocked = true;
                 
                 // Ocultar futuro lejano en pendientes
                 const diffDays = (readingDate - todayDate) / (1000 * 60 * 60 * 24);
