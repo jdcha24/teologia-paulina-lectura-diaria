@@ -696,10 +696,12 @@ export default function App() {
                                                       <div className="font-bold text-red-600 mb-2 flex items-center gap-1"><AlertCircle size={12}/> Lecturas Pendientes:</div>
                                                       {pendingReadings.length > 0 ? (
                                                           <ul className="space-y-1 pl-4 list-disc text-slate-600">
-                                                              {pendingReadings.slice(0, 10).map(r => (
-                                                                  <li key={r.id}><span className="font-bold">{r.scripture || r.title}</span> <span className="text-slate-400 ml-1">({r.date})</span></li>
+                                                              {pendingReadings.map(r => (
+                                                                  <li key={r.id}>
+                                                                      <span className="font-bold">{r.scripture || r.title}</span> 
+                                                                      <span className="text-slate-400 ml-1">({r.date})</span>
+                                                                  </li>
                                                               ))}
-                                                              {pendingReadings.length > 10 && <li>...y {pendingReadings.length - 10} más</li>}
                                                           </ul>
                                                       ) : <p className="text-emerald-600 italic flex items-center gap-1"><CheckCircle size={12}/> ¡Está al día!</p>}
                                                   </div>
@@ -743,17 +745,13 @@ export default function App() {
                                                       <div className="flex-1">
                                                           <div className="font-bold text-emerald-600 mb-1">Completado por:</div>
                                                           <div className="flex flex-wrap gap-1">
-                                                              {allUsers.filter(u => readers.includes(u.uid)).map(u => (
-                                                                  <span key={u.id} className="bg-white border border-emerald-100 px-2 py-0.5 rounded text-emerald-700">{u.displayName}</span>
-                                                              ))}
+                                                              {allUsers.filter(u => readers.includes(u.uid)).map(u => <span key={u.id} className="bg-white border border-emerald-100 px-2 py-0.5 rounded text-emerald-700">{u.displayName}</span>)}
                                                           </div>
                                                       </div>
                                                       <div className="flex-1 border-l pl-4 border-slate-200">
                                                           <div className="font-bold text-red-500 mb-1">Pendiente:</div>
                                                           <div className="flex flex-wrap gap-1">
-                                                              {missingUsers.map(u => (
-                                                                  <span key={u.id} className="bg-white border border-red-100 px-2 py-0.5 rounded text-red-600">{u.displayName}</span>
-                                                              ))}
+                                                              {missingUsers.map(u => <span key={u.id} className="bg-white border border-red-100 px-2 py-0.5 rounded text-red-600">{u.displayName}</span>)}
                                                           </div>
                                                       </div>
                                                   </div>
@@ -817,20 +815,13 @@ export default function App() {
                       <p>No hay lecturas {userFilter === 'pending' ? 'pendientes' : 'completadas'}.</p>
                   </div>
               ) : (
-                  sortedDates.map(date => {
-                      const dayReadings = groupedReadings[date];
-                      // Verificar si todas las lecturas de este día están completas (para el check general del día)
-                      const isDayFullyComplete = dayReadings.every(r => completionsMap[r.id]);
-
-                      return (
+                  sortedDates.map(date => (
                       <div key={date} className="space-y-3">
                           <div className="flex items-center gap-2 text-slate-400 text-xs font-bold uppercase tracking-wider px-2">
                               <Calendar size={14}/> {date === getLocalDate() ? 'Hoy' : new Date(date + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
                               <div className="h-px bg-slate-200 flex-1"></div>
-                              {isDayFullyComplete && <CheckCircle size={14} className="text-emerald-500"/>}
                           </div>
-                          
-                          {dayReadings.map(r => {
+                          {groupedReadings[date].map(r => {
                               const isRead = completionsMap[r.id];
                               const comments = commentsMap[r.id] || [];
                               const showComments = activeReadingIdForComment === r.id;
@@ -863,7 +854,6 @@ export default function App() {
                                           </button>
                                       </div>
                                       
-                                      {/* Comentarios Mini - MODIFICADO A BOTÓN GRANDE */}
                                       <div className="bg-slate-50/50 border-t p-2">
                                           <button 
                                               onClick={() => setActiveReadingIdForComment(showComments ? null : r.id)}
@@ -888,7 +878,6 @@ export default function App() {
                                           )}
                                       </div>
 
-                                      {/* Área Expandible */}
                                       {showComments && (
                                           <div className="p-4 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top-1">
                                               {r.externalContent && (
@@ -921,7 +910,7 @@ export default function App() {
                               );
                           })}
                       </div>
-                  ));
+                  ))
               )}
           </main>
       </div>
