@@ -683,9 +683,9 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
   };
 
   const sendWhatsAppNotification = (day) => {
-      let msg = `*Plan Bíblico Diario*\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Lectura:* ${day.corePassage}`;
-      if (day.observation) msg += `\n\n💬 *Pastoral:* _"${day.observation}"_`;
-      msg += `\n\n🔗 *Reporta el Cumplimiento:* ${APP_URL}`;
+      // Mensaje de cumplimiento para el usuario
+      let msg = `✅ *¡Lectura Completada!*\n\nHe terminado mi lectura diaria del plan *Teología Paulina*.\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Pasaje:* ${day.corePassage}`;
+      msg += `\n\n🔗 _${APP_URL}_`;
       window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
@@ -798,19 +798,17 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                 const isFuture = readingDate > todayDate;
                 const prevDayId = index > 0 ? userPlan[index-1].id : null;
                 const isSeqLocked = prevDayId && !completionsMap[prevDayId];
+                const isAdminLocked = !day.isEnabled;
                 
-                // --- LÓGICA DE BLOQUEO ACTUALIZADA ---
+                // El bloqueo lógico (candado) sigue aplicando aunque sea un "late joiner" si intenta saltar en el futuro
+                // Pero si está en el pasado (histórico habilitado), no debería bloquearse por "secuencia" si está antes de su fecha de inicio...
+                // Simplificación: Mantener bloqueo secuencial estricto PARA LO QUE VE.
+                // Si ocultamos lo anterior, el 'prevDayId' visible es el anterior visible?
+                // No, el bloqueo secuencial en un plan anual suele ser sobre el día inmediatamente anterior del calendario.
+                // Si ocultamos los días viejos, el usuario verá el primer día de "su plan". Ese primer día debería estar desbloqueado.
                 
-                // 1. Visibilidad Base: Habilitado por Admin, O es Hoy, O es Pasado.
-                const isToday = day.date === todayStr;
-                const isPast = day.date < todayStr;
-                const isEffectivelyEnabled = day.isEnabled || isPast || isToday;
-                
-                // 2. Candado Admin (si no está habilitado/pasado/hoy, es futuro cerrado)
-                const isAdminLocked = !isEffectivelyEnabled;
-
-                // 3. Bloqueo Secuencial Inteligente (depende de fecha de inicio)
-                let isPrevComplete = true; 
+                // Lógica de Bloqueo Secuencial Inteligente
+                let isPrevComplete = true; // Por defecto asumimos que el anterior está ok (caso primer día o jump-in)
                 
                 if (index > 0) {
                     const prevDay = userPlan[index - 1];
@@ -830,15 +828,24 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                     }
                 }
 
+                // 2. Estado Efectivo de Publicación (Regla de Oro: Pasado = Visible)
+                const isToday = day.date === todayStr;
+                const isPast = day.date < todayStr;
+                
+                // Si es fecha pasada, siempre está "efectivamente habilitada" para el usuario
+                // Si es futuro, depende del admin.
+                const isEffectivelyEnabled = isPast || isToday || day.isEnabled;
+
                 // Estado final del candado
-                // Está bloqueado SI: (Es futuro Y no habilitado) O (Admin lo cerró) O (No completó anterior)
-                let isLocked = isAdminLocked;
-                if (!isPrevComplete) isLocked = true;
+                // Está bloqueado SI: (No está habilitado/pasado) O (No completó anterior)
+                let isLocked = false;
+                if (!isEffectivelyEnabled) isLocked = true; // Cerrado por admin o futuro
+                if (!isPrevComplete) isLocked = true; // Cerrado por secuencia
                 
                 // Ocultar futuro lejano en pendientes
                 const diffDays = (readingDate - todayDate) / (1000 * 60 * 60 * 24);
                 if (userFilter === 'pending' && diffDays > 3) return null; 
-                if (isAdminLocked && userFilter === 'pending' && diffDays > 0) return null;
+                if (!isEffectivelyEnabled && userFilter === 'pending' && diffDays > 0) return null;
 
                 const comments = commentsMap[day.id] || [];
                 const showComments = activeReadingIdForComment === day.id;
@@ -849,10 +856,10 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                             {isLocked && (
                                 <div className="bg-slate-100 p-1 text-center text-[10px] uppercase font-bold text-slate-400 flex justify-center items-center gap-1 border-b">
                                     <Lock size={10}/> 
-                                    {isAdminLocked ? 'Aún no disponible' : (isFuture ? `Disponible el ${day.displayDate}` : 'Completa la anterior')}
+                                    {!isEffectivelyEnabled ? 'Aún no disponible' : (isFuture ? `Disponible el ${day.displayDate}` : 'Completa la anterior')}
                                 </div>
                             )}
-                            <div className={`p-4 flex justify-between items-start ${day.isEnabled ? 'bg-white border-l-4 border-sky-500' : 'bg-slate-50 border-l-4 border-slate-300'}`}>
+                            <div className={`p-4 flex justify-between items-start ${isEffectivelyEnabled ? 'bg-white border-l-4 border-sky-500' : 'bg-slate-50 border-l-4 border-slate-300'}`}>
                                 <div className="flex-1">
                                     <div className="flex items-center gap-2 mb-1">
                                       <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{day.displayDate}</span>
