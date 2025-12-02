@@ -253,6 +253,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
   };
 
   const todayStr = getLocalDate();
+  const currentYear = new Date().getFullYear();
 
   // Filtrar el plan según la sub-pestaña activa
   const visiblePlan = useMemo(() => {
@@ -509,14 +510,21 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                         </div>
                         <div className="divide-y max-h-96 overflow-y-auto">
                             {allUsers.map(u => {
-                                const userReadIds = allCompletions.filter(c => c.userId === u.uid).map(c => c.readingId);
+                                // REINICIO ANUAL: Solo contar completados que empiezan con el año actual
+                                const userReadIds = allCompletions
+                                    .filter(c => c.userId === u.uid && c.readingId.startsWith(`${currentYear}-`))
+                                    .map(c => c.readingId);
+                                
                                 const count = userReadIds.length;
                                 const percent = Math.min(100, Math.round((count / 365) * 100));
                                 const isExpanded = expandedStatItem === u.id;
                                 
-                                // Calcular pendientes hasta HOY
+                                // Calcular pendientes hasta HOY (respetando fecha inicio usuario)
                                 const todayStr = getLocalDate();
                                 const pendingReadings = staticPlan.filter(day => {
+                                    // Si hay fecha de inicio y la lectura es anterior, NO es pendiente
+                                    if (u.planStartDate && day.date < u.planStartDate) return false;
+                                    
                                     return day.date <= todayStr && !userReadIds.includes(day.id);
                                 });
 
@@ -807,6 +815,8 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                 // No, el bloqueo secuencial en un plan anual suele ser sobre el día inmediatamente anterior del calendario.
                 // Si ocultamos los días viejos, el usuario verá el primer día de "su plan". Ese primer día debería estar desbloqueado.
                 
+                let isLocked = isFuture || isAdminLocked;
+                
                 // Lógica de Bloqueo Secuencial Inteligente
                 let isPrevComplete = true; // Por defecto asumimos que el anterior está ok (caso primer día o jump-in)
                 
@@ -828,24 +838,13 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                     }
                 }
 
-                // 2. Estado Efectivo de Publicación (Regla de Oro: Pasado = Visible)
-                const isToday = day.date === todayStr;
-                const isPast = day.date < todayStr;
-                
-                // Si es fecha pasada, siempre está "efectivamente habilitada" para el usuario
-                // Si es futuro, depende del admin.
-                const isEffectivelyEnabled = isPast || isToday || day.isEnabled;
-
-                // Estado final del candado
-                // Está bloqueado SI: (No está habilitado/pasado) O (No completó anterior)
-                let isLocked = false;
-                if (!isEffectivelyEnabled) isLocked = true; // Cerrado por admin o futuro
-                if (!isPrevComplete) isLocked = true; // Cerrado por secuencia
+                // Aplicar bloqueo si el anterior no está "completo" (ya sea real o virtualmente)
+                if (!isPrevComplete) isLocked = true;
                 
                 // Ocultar futuro lejano en pendientes
                 const diffDays = (readingDate - todayDate) / (1000 * 60 * 60 * 24);
                 if (userFilter === 'pending' && diffDays > 3) return null; 
-                if (!isEffectivelyEnabled && userFilter === 'pending' && diffDays > 0) return null;
+                if (isAdminLocked && userFilter === 'pending' && diffDays > 0) return null;
 
                 const comments = commentsMap[day.id] || [];
                 const showComments = activeReadingIdForComment === day.id;
@@ -856,10 +855,10 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                             {isLocked && (
                                 <div className="bg-slate-100 p-1 text-center text-[10px] uppercase font-bold text-slate-400 flex justify-center items-center gap-1 border-b">
                                     <Lock size={10}/> 
-                                    {!isEffectivelyEnabled ? 'Aún no disponible' : (isFuture ? `Disponible el ${day.displayDate}` : 'Completa la anterior')}
+                                    {isAdminLocked ? 'Aún no disponible' : (isFuture ? `Disponible el ${day.displayDate}` : 'Completa la anterior')}
                                 </div>
                             )}
-                            <div className={`p-4 flex justify-between items-start ${isEffectivelyEnabled ? 'bg-white border-l-4 border-sky-500' : 'bg-slate-50 border-l-4 border-slate-300'}`}>
+                            <div className={`p-4 flex justify-between items-start ${day.isEnabled ? 'bg-white border-l-4 border-sky-500' : 'bg-slate-50 border-l-4 border-slate-300'}`}>
                                 <div className="flex-1">
                                     <div className="flex items-center gap-2 mb-1">
                                       <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{day.displayDate}</span>
@@ -1070,7 +1069,10 @@ export default function App() {
             const data = doc.data();
             map[data.readingId] = true;
             userCompletions.add(data.readingId);
-            count++;
+            // REINICIO ANUAL: Solo contar para la barra de progreso si es del año actual
+            if (data.readingId.startsWith(`${new Date().getFullYear()}-`)) {
+                count++;
+            }
         });
         setCompletionsMap(map);
         
