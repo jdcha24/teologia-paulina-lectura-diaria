@@ -402,10 +402,6 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                     const isEnabled = content.isEnabled;
                                     const extrasCount = content.extraReadings?.length || 0;
                                     const isPast = day.date < todayStr;
-                                    const isToday = day.date === todayStr;
-                                    
-                                    // Visualmente activo si está habilitado O si es pasado/hoy (regla de oro)
-                                    const isEffectivelyActive = isEnabled || isPast || isToday;
 
                                     return (
                                         <div key={day.id} className={`p-3 flex items-center justify-between hover:bg-slate-50 transition-colors ${editingDay?.id === day.id ? 'bg-sky-50 border-l-4 border-sky-500' : ''}`}>
@@ -415,7 +411,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                                     {isPast ? (
                                                         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">HISTÓRICO</span> 
                                                     ) : (
-                                                        isEffectivelyActive ? 
+                                                        isEnabled ? 
                                                         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700"><CheckCircle size={10} className="mr-1"/> ACTIVO</span> 
                                                         : 
                                                         <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-500"><Lock size={10} className="mr-1"/> INACTIVO</span>
@@ -438,9 +434,9 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                                 <button 
                                                     onClick={() => toggleDayEnabled(day, isEnabled)}
                                                     disabled={isPast}
-                                                    className={`p-2 rounded hover:bg-slate-200 ${isPast ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEffectivelyActive ? 'text-emerald-500' : 'text-red-500')}`}
+                                                    className={`p-2 rounded hover:bg-slate-200 ${isPast ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEnabled ? 'text-emerald-500' : 'text-red-500')}`}
                                                 >
-                                                    {isEffectivelyActive ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}
+                                                    {isEnabled ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}
                                                 </button>
                                                 <button 
                                                     onClick={() => startEditing(day)}
@@ -672,6 +668,16 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
       const docRef = doc(db, 'artifacts', APP_ID, 'completions', id);
 
       if (isComplete) {
+          // --- NUEVA VALIDACIÓN ---
+          // Verificar si hay lecturas posteriores completadas
+          const hasFutureReadings = Object.keys(completionsMap).some(completedDate => completedDate > readingId);
+          
+          if (hasFutureReadings) {
+              alert("No puedes desmarcar esta lectura porque ya tienes lecturas posteriores completadas. Para mantener el orden, debes desmarcar las más recientes primero.");
+              return;
+          }
+          // ------------------------
+
           if (!confirm("¿Desmarcar lectura? Restará progreso.")) return;
           await deleteDoc(docRef);
       } else {
@@ -1052,26 +1058,66 @@ export default function App() {
 
     const unsubCompletions = onSnapshot(query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', userData.uid)), snap => {
         const map = {};
-        const userCompletions = new Set();
+        const datesSet = new Set();
         let count = 0;
+        
         snap.docs.forEach(doc => {
             const data = doc.data();
             map[data.readingId] = true;
-            userCompletions.add(data.readingId);
-            count++;
+            
+            // Recolectar fechas únicas para la racha
+            if (data.completedAt) {
+                const date = data.completedAt.toDate();
+                const year = date.getFullYear();
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const day = String(date.getDate()).padStart(2, '0');
+                datesSet.add(`${year}-${month}-${day}`);
+            }
+
+            // Contar para progreso anual
+            if (data.readingId.startsWith(`${new Date().getFullYear()}-`)) {
+                count++;
+            }
         });
         setCompletionsMap(map);
         
-        // Progress & Streak logic
-        setBibleProgress(Math.min(100, Math.round((count / 365) * 100)));
+        // --- CÁLCULO DE RACHA REAL (DÍAS CONSECUTIVOS) ---
         let currentStreak = 0;
-        let cursorDate = getLocalDate();
-        if (!userCompletions.has(cursorDate)) cursorDate = getPrevDateStr(cursorDate);
-        while(userCompletions.has(cursorDate)) {
-             currentStreak++;
-             cursorDate = getPrevDateStr(cursorDate);
+        const today = new Date();
+        
+        // Función para checkear si una fecha está en el set
+        const checkDate = (d) => {
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return datesSet.has(`${y}-${m}-${day}`);
+        };
+
+        // 1. Ver si hoy contó
+        let cursor = new Date(today);
+        if (!checkDate(cursor)) {
+            // Si hoy no está, ver si ayer está (para no romper la racha visualmente aún)
+            cursor.setDate(cursor.getDate() - 1);
+            if (!checkDate(cursor)) {
+                cursor = null; // Ni hoy ni ayer, racha rota
+            }
         }
+
+        // 2. Contar hacia atrás
+        if (cursor) {
+            currentStreak = 1; // Ya encontramos uno (hoy o ayer)
+            while (true) {
+                cursor.setDate(cursor.getDate() - 1);
+                if (checkDate(cursor)) {
+                    currentStreak++;
+                } else {
+                    break;
+                }
+            }
+        }
+        
         setStreak(currentStreak);
+        setBibleProgress(Math.min(100, Math.round((count / 365) * 100)));
     });
 
     // Admin data load
