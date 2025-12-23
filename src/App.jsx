@@ -509,7 +509,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                         </div>
                         <div className="divide-y max-h-96 overflow-y-auto">
                             {allUsers.map(u => {
-                                const userReadIds = allCompletions.filter(c => c.userId === u.uid && c.readingId.startsWith(new Date().getFullYear())).map(c => c.readingId);
+                                const userReadIds = allCompletions.filter(c => c.userId === u.uid).map(c => c.readingId);
                                 const count = userReadIds.length;
                                 const percent = Math.min(100, Math.round((count / 365) * 100));
                                 const isExpanded = expandedStatItem === u.id;
@@ -517,7 +517,6 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                 // Calcular pendientes hasta HOY
                                 const todayStr = getLocalDate();
                                 const pendingReadings = staticPlan.filter(day => {
-                                    if (u.planStartDate && day.date < u.planStartDate) return false;
                                     return day.date <= todayStr && !userReadIds.includes(day.id);
                                 });
 
@@ -658,6 +657,14 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
     });
   }, [staticPlan, dailyContentMap]);
 
+  // NUEVO: Plan visible ordenado según el filtro (DESC para Completados)
+  const visiblePlan = useMemo(() => {
+      if (userFilter === 'completed') {
+          return [...userPlan].reverse(); 
+      }
+      return userPlan;
+  }, [userPlan, userFilter]);
+
   const toggleCompletion = async (readingId) => {
       if (!activeUid) return;
       const isComplete = completionsMap[readingId];
@@ -684,7 +691,6 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
   };
 
   const sendWhatsAppNotification = (day) => {
-      // Mensaje de cumplimiento para el usuario
       let msg = `✅ *¡Lectura Completada!*\n\nHe terminado mi lectura diaria del plan *Teología Paulina*.\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Pasaje:* ${day.corePassage}`;
       msg += `\n\n🔗 _${APP_URL}_`;
       window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
@@ -780,20 +786,22 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
         </div>
 
         <div className="space-y-4">
-            {userPlan.map((day, index) => {
+            {visiblePlan.map((day) => {
                 const isComplete = completionsMap[day.id];
                 
+                // --- FILTROS ---
                 if (userFilter === 'completed' && !isComplete) return null;
                 
+                // Filtro especial para pendientes:
                 if (userFilter === 'pending') {
-                    if (isComplete) return null; 
+                    if (isComplete) return null; // Si está completa, no mostrar en pendientes
+                    // Si el usuario tiene fecha de inicio, ocultar lecturas ANTERIORES a esa fecha
                     if (user.planStartDate && day.date < user.planStartDate) return null;
                 }
 
                 const readingDate = new Date(day.date + 'T12:00:00');
                 const isFuture = readingDate > todayDate;
-                const prevDayId = index > 0 ? userPlan[index-1].id : null;
-                const isSeqLocked = prevDayId && !completionsMap[prevDayId];
+                const isAdminLocked = !day.isEnabled;
                 
                 // LÓGICA DE VISIBILIDAD UNIFICADA
                 const isToday = day.date === todayStr;
@@ -801,23 +809,27 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                 // Si es fecha pasada, siempre está visible. Si es futuro, depende del admin.
                 const isEffectivelyEnabled = isPast || isToday || day.isEnabled;
 
-                // LÓGICA DE CANDADO (SEQUENTIAL LOCK)
-                let isLocked = !isEffectivelyEnabled; // Bloqueado si no está habilitado (Futuro no llegado o Admin off)
+                // LÓGICA DE CANDADO (SEQUENTIAL LOCK) - INDEPENDIENTE DEL ORDEN VISUAL
+                let isLocked = !isEffectivelyEnabled; 
                 
-                // Verificación de secuencia (SOLO PARA HOY O FUTURO)
-                // Los días pasados siempre quedan abiertos para ponerse al día (Catch-up mode)
-                if (!isPast && index > 0) {
-                    const prevDay = userPlan[index - 1];
-                    let isPrevOk = !!completionsMap[prevDay.id]; // Normalmente requerimos que el anterior esté completo
+                // Verificación de secuencia (SOLO SI NO ES PASADO)
+                // Usamos staticPlan[0].id para detectar si es el primer día absoluto del plan
+                if (day.id !== staticPlan[0].id) {
+                    const prevDate = getPrevDateStr(day.date);
+                    let isPrevOk = !!completionsMap[prevDate];
 
-                    // EXCEPCIÓN: Si el usuario tiene fecha de inicio, y este es su "Primer Día"
-                    // (Es decir, el día actual es >= start date, pero el anterior era < start date)
-                    if (user.planStartDate && day.date >= user.planStartDate && prevDay.date < user.planStartDate) {
-                        isPrevOk = true; // Forzamos OK porque es el primer día de su plan
+                    if (user.planStartDate) {
+                        // Si la lectura anterior es MENOR a la fecha de inicio, se asume completada/saltada.
+                        if (prevDate < user.planStartDate) {
+                            isPrevOk = true;
+                        }
                     }
                     
                     if (!isPrevOk) isLocked = true;
                 }
+
+                // SIEMPRE desbloquear fechas pasadas (Catch-up mode)
+                if (isPast) isLocked = false;
 
                 const diffDays = (readingDate - todayDate) / (1000 * 60 * 60 * 24);
                 if (userFilter === 'pending' && diffDays > 3) return null; 
@@ -1040,66 +1052,26 @@ export default function App() {
 
     const unsubCompletions = onSnapshot(query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', userData.uid)), snap => {
         const map = {};
-        const datesSet = new Set();
+        const userCompletions = new Set();
         let count = 0;
-        
         snap.docs.forEach(doc => {
             const data = doc.data();
             map[data.readingId] = true;
-            
-            // Recolectar fechas únicas para la racha
-            if (data.completedAt) {
-                const date = data.completedAt.toDate();
-                const year = date.getFullYear();
-                const month = String(date.getMonth() + 1).padStart(2, '0');
-                const day = String(date.getDate()).padStart(2, '0');
-                datesSet.add(`${year}-${month}-${day}`);
-            }
-
-            // Contar para progreso anual
-            if (data.readingId.startsWith(`${new Date().getFullYear()}-`)) {
-                count++;
-            }
+            userCompletions.add(data.readingId);
+            count++;
         });
         setCompletionsMap(map);
         
-        // --- CÁLCULO DE RACHA REAL (DÍAS CONSECUTIVOS) ---
-        let currentStreak = 0;
-        const today = new Date();
-        
-        // Función para checkear si una fecha está en el set
-        const checkDate = (d) => {
-            const y = d.getFullYear();
-            const m = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return datesSet.has(`${y}-${m}-${day}`);
-        };
-
-        // 1. Ver si hoy contó
-        let cursor = new Date(today);
-        if (!checkDate(cursor)) {
-            // Si hoy no está, ver si ayer está (para no romper la racha visualmente aún)
-            cursor.setDate(cursor.getDate() - 1);
-            if (!checkDate(cursor)) {
-                cursor = null; // Ni hoy ni ayer, racha rota
-            }
-        }
-
-        // 2. Contar hacia atrás
-        if (cursor) {
-            currentStreak = 1; // Ya encontramos uno (hoy o ayer)
-            while (true) {
-                cursor.setDate(cursor.getDate() - 1);
-                if (checkDate(cursor)) {
-                    currentStreak++;
-                } else {
-                    break;
-                }
-            }
-        }
-        
-        setStreak(currentStreak);
+        // Progress & Streak logic
         setBibleProgress(Math.min(100, Math.round((count / 365) * 100)));
+        let currentStreak = 0;
+        let cursorDate = getLocalDate();
+        if (!userCompletions.has(cursorDate)) cursorDate = getPrevDateStr(cursorDate);
+        while(userCompletions.has(cursorDate)) {
+             currentStreak++;
+             cursorDate = getPrevDateStr(cursorDate);
+        }
+        setStreak(currentStreak);
     });
 
     // Admin data load
