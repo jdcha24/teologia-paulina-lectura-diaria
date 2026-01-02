@@ -30,7 +30,7 @@ import {
   Shield, ShieldCheck, Bell, X, 
   AlertTriangle, FileText, Link as LinkIcon, Activity,
   Flame, Award, Crown, Star, Medal, Lock, Percent, MessageCircle, ToggleLeft, ToggleRight, Plus, Trash2,
-  AlertCircle, Settings, History, Clock, Zap
+  AlertCircle, Settings, History, Clock, Zap, Search, UserCheck, UserPlus
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE ---
@@ -169,18 +169,45 @@ const Card = ({ children, className = '' }) => (
 // --- COMPONENTE ADMIN VIEW ---
 const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user, onBack }) => {
   const [activeTab, setActiveTab] = useState('reading');
-  const [planSubTab, setPlanSubTab] = useState('pending');
+  const [planSubTab, setPlanSubTab] = useState('pending'); 
+  
+  // Estados para Usuarios
+  const [userTab, setUserTab] = useState('pending'); // 'pending' | 'approved'
+  
+  // Estados para Estadísticas
   const [statsMode, setStatsMode] = useState('byUser');
+  const [searchQuery, setSearchQuery] = useState(''); // Buscador general
+
   const [editingDay, setEditingDay] = useState(null);
   const [expandedStatItem, setExpandedStatItem] = useState(null);
   
-  const [editForm, setEditForm] = useState({ 
-    observation: '', 
-    extraReadings: [], 
-    isEnabled: false 
-  });
-  
+  const [editForm, setEditForm] = useState({ observation: '', extraReadings: [], isEnabled: false });
   const [newExtra, setNewExtra] = useState({ title: '', link: '' });
+
+  const todayStr = getLocalDate();
+
+  // Filtrado de usuarios
+  const pendingUsers = useMemo(() => allUsers.filter(u => !u.isApproved), [allUsers]);
+  const approvedUsers = useMemo(() => allUsers.filter(u => u.isApproved), [allUsers]);
+  
+  const visibleUsersList = useMemo(() => {
+     return userTab === 'pending' ? pendingUsers : approvedUsers;
+  }, [userTab, pendingUsers, approvedUsers]);
+
+  // Filtrado de Estadísticas
+  const filteredStatsUsers = useMemo(() => {
+      if (!searchQuery) return allUsers;
+      return allUsers.filter(u => u.displayName.toLowerCase().includes(searchQuery.toLowerCase()));
+  }, [allUsers, searchQuery]);
+
+  const filteredStatsReadings = useMemo(() => {
+      if (!searchQuery) return staticPlan;
+      return staticPlan.filter(d => 
+          d.corePassage.toLowerCase().includes(searchQuery.toLowerCase()) || 
+          d.displayDate.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+  }, [staticPlan, searchQuery]);
+
 
   const startEditing = (day) => {
     const content = dailyContentMap[day.id] || {};
@@ -225,7 +252,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
   };
 
   const toggleDayEnabled = async (day, currentStatus) => {
-    if (day.date < getLocalDate()) return; 
+    if (day.date <= todayStr) return; // No cambiar pasado ni hoy
 
     const docRef = doc(db, 'artifacts', APP_ID, 'daily_content', day.id);
     await setDoc(docRef, { isEnabled: !currentStatus }, { merge: true });
@@ -235,7 +262,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
       let msg = `*Plan Bíblico Diario*\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Lectura:* ${day.corePassage}`;
       if (content?.observation) msg += `\n\n💬 *Pastoral:* _"${content.observation}"_`;
       if (content?.extraReadings?.length > 0) msg += `\n\n➕ *Material Extra:* ${content.extraReadings.length} recursos disponibles.`;
-      msg += `\n\n🔗 *Reporta el Cumplimiento:* ${APP_URL}`;
+      // LINK ELIMINADO A PETICIÓN
       window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
@@ -243,50 +270,33 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
       await updateDoc(doc(db, 'artifacts', APP_ID, 'users', uid), { [field]: value });
   };
 
-  // --- FUNCIÓN DE ACTUALIZACIÓN MASIVA ---
   const setMassiveStartDate = async () => {
-      if (!confirm("⚠️ ATENCIÓN: Esto establecerá la fecha de inicio del plan para TODOS los usuarios al 01-01-2026.\n\nEsta acción es irreversible y afectará a los usuarios existentes.\n\n¿Estás seguro de continuar?")) return;
-      
+      if (!confirm("⚠️ ATENCIÓN: Esto establecerá la fecha de inicio del plan para TODOS los usuarios al 01-01-2026.\n\n¿Estás seguro?")) return;
       try {
-          // Obtener todos los usuarios
           const usersSnapshot = await getDocs(collection(db, 'artifacts', APP_ID, 'users'));
-          const totalUsers = usersSnapshot.size;
-          
-          // Crear batches (lotes) de escritura (Límite Firestore: 500 ops por batch)
           const batchSize = 450; 
           const batches = [];
           let currentBatch = writeBatch(db);
           let operationCounter = 0;
-
           usersSnapshot.docs.forEach((userDoc, index) => {
               const userRef = doc(db, 'artifacts', APP_ID, 'users', userDoc.id);
               currentBatch.update(userRef, { planStartDate: '2026-01-01' });
               operationCounter++;
-
-              // Si llenamos el batch o es el último usuario, lo guardamos para ejecutar
-              if (operationCounter === batchSize || index === totalUsers - 1) {
+              if (operationCounter === batchSize || index === usersSnapshot.size - 1) {
                   batches.push(currentBatch.commit());
-                  currentBatch = writeBatch(db); // Iniciar nuevo batch
+                  currentBatch = writeBatch(db); 
                   operationCounter = 0;
               }
           });
-
-          // Ejecutar todas las actualizaciones
           await Promise.all(batches);
-          alert(`✅ Éxito: Se actualizó la fecha de inicio a 2026-01-01 para ${totalUsers} usuarios.`);
-          
-      } catch (error) {
-          console.error("Error en migración masiva:", error);
-          alert("❌ Error durante la actualización. Revisa la consola para más detalles.");
-      }
+          alert(`✅ Éxito.`);
+      } catch (error) { console.error(error); alert("❌ Error."); }
   };
 
   const toggleStatExpand = (id) => {
     if (expandedStatItem === id) setExpandedStatItem(null);
     else setExpandedStatItem(id);
   };
-
-  const todayStr = getLocalDate();
 
   const visiblePlan = useMemo(() => {
       if (planSubTab === 'history') {
@@ -300,7 +310,10 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
     <div className="max-w-7xl mx-auto p-4 space-y-6">
         <div className="flex gap-2 border-b pb-2 overflow-x-auto">
             <Button variant={activeTab==='reading'?'primary':'ghost'} onClick={()=>setActiveTab('reading')} className="text-sm"><BookOpen size={16} className="mr-2"/> Planificación</Button>
-            <Button variant={activeTab==='users'?'primary':'ghost'} onClick={()=>setActiveTab('users')} className="text-sm"><Users size={16} className="mr-2"/> Usuarios</Button>
+            <div className="relative">
+                <Button variant={activeTab==='users'?'primary':'ghost'} onClick={()=>setActiveTab('users')} className="text-sm"><Users size={16} className="mr-2"/> Usuarios</Button>
+                {pendingUsers.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full animate-pulse">{pendingUsers.length}</span>}
+            </div>
             <Button variant={activeTab==='stats'?'primary':'ghost'} onClick={()=>setActiveTab('stats')} className="text-sm"><BarChart2 size={16} className="mr-2"/> Progreso</Button>
         </div>
 
@@ -316,81 +329,46 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                         {editingDay ? (
                             <form onSubmit={saveDayConfig} className="space-y-4">
                                 <div className="bg-sky-50 p-3 rounded text-sm mb-4 border border-sky-100">
-                                    <div className="text-xs font-bold text-sky-600 uppercase mb-1">Lectura Bíblica (Fija)</div>
+                                    <div className="text-xs font-bold text-sky-600 uppercase mb-1">Lectura Bíblica</div>
                                     <div className="font-bold text-slate-800 text-lg">{editingDay.corePassage}</div>
                                 </div>
-
                                 <div>
                                     <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Comentario Pastoral</label>
-                                    <textarea 
-                                        className="w-full p-2 border rounded text-sm h-24" 
-                                        placeholder="Escribe un comentario..."
-                                        value={editForm.observation}
-                                        onChange={e=>setEditForm({...editForm, observation:e.target.value})}
-                                    />
+                                    <textarea className="w-full p-2 border rounded text-sm h-24" value={editForm.observation} onChange={e=>setEditForm({...editForm, observation:e.target.value})}/>
                                 </div>
-
                                 <div className="p-3 bg-amber-50 rounded border border-amber-100">
                                     <label className="text-xs font-bold text-amber-600 uppercase block mb-2">Lecturas Adicionales</label>
                                     <div className="space-y-2 mb-3">
                                       {editForm.extraReadings.map((extra, idx) => (
                                         <div key={extra.id || idx} className="flex justify-between items-center bg-white p-2 rounded border border-amber-200 text-sm">
-                                          <div className="truncate">
-                                            <div className="font-bold text-slate-700">{extra.title}</div>
-                                            <div className="text-xs text-slate-400 truncate">{extra.link}</div>
-                                          </div>
+                                          <div className="truncate"><div className="font-bold text-slate-700">{extra.title}</div></div>
                                           <button type="button" onClick={() => removeExtraReading(extra.id)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={14}/></button>
                                         </div>
                                       ))}
                                     </div>
                                     <div className="flex flex-col gap-2 border-t border-amber-200 pt-2">
-                                      <input 
-                                          className="w-full p-2 border rounded text-sm" 
-                                          placeholder="Título (Ej: Artículo Teológico)"
-                                          value={newExtra.title}
-                                          onChange={e=>setNewExtra({...newExtra, title:e.target.value})}
-                                      />
+                                      <input className="w-full p-2 border rounded text-sm" placeholder="Título" value={newExtra.title} onChange={e=>setNewExtra({...newExtra, title:e.target.value})}/>
                                       <div className="flex gap-2">
-                                        <input 
-                                            className="w-full p-2 border rounded text-sm" 
-                                            placeholder="URL (Opcional)"
-                                            value={newExtra.link}
-                                            onChange={e=>setNewExtra({...newExtra, link:e.target.value})}
-                                        />
+                                        <input className="w-full p-2 border rounded text-sm" placeholder="URL" value={newExtra.link} onChange={e=>setNewExtra({...newExtra, link:e.target.value})}/>
                                         <Button type="button" onClick={addExtraReading} className="px-3" disabled={!newExtra.title}><Plus size={16}/></Button>
                                       </div>
                                     </div>
                                 </div>
-
                                 <div className="flex items-center justify-between py-2 border-t border-b bg-slate-50 px-2 rounded">
                                     <span className="text-sm font-bold text-slate-700">Estado de Publicación</span>
-                                    <button 
-                                        type="button" 
-                                        disabled={editingDay.date < todayStr}
-                                        onClick={()=>setEditForm({...editForm, isEnabled: !editForm.isEnabled})}
-                                        className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${editForm.isEnabled ? 'bg-emerald-500' : 'bg-red-500'} ${editingDay.date < todayStr ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                    >
+                                    <button type="button" disabled={editingDay.date <= todayStr} onClick={()=>setEditForm({...editForm, isEnabled: !editForm.isEnabled})} className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${editForm.isEnabled ? 'bg-emerald-500' : 'bg-red-500'} ${editingDay.date <= todayStr ? 'opacity-50 cursor-not-allowed' : ''}`}>
                                         <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${editForm.isEnabled ? 'translate-x-6' : 'translate-x-1'}`}/>
                                     </button>
                                 </div>
                                 <div className="text-center text-xs font-bold uppercase tracking-wide">
-                                    {editingDay.date < todayStr ? (
-                                        <span className="text-emerald-600">Visible (Automático por Fecha)</span>
-                                    ) : (
-                                        editForm.isEnabled ? <span className="text-emerald-600">Visible para Usuarios</span> : <span className="text-red-500">Oculto / Bloqueado</span>
-                                    )}
+                                    {editingDay.date <= todayStr ? <span className="text-emerald-600">Visible (Automático)</span> : (editForm.isEnabled ? <span className="text-emerald-600">Visible</span> : <span className="text-red-500">Oculto</span>)}
                                 </div>
-
                                 <div className="flex gap-2">
                                     <Button type="button" variant="secondary" onClick={()=>setEditingDay(null)} className="flex-1">Cancelar</Button>
                                     <Button type="submit" variant="primary" className="flex-1">Guardar</Button>
                                 </div>
                             </form>
-                        ) : (
-                            <div className="text-center py-10 text-slate-400 text-sm">
-                                Haz clic en el icono <Edit3 size={14} className="inline"/> de la lista para configurar el contenido del día.
-                            </div>
-                        )}
+                        ) : <div className="text-center py-10 text-slate-400 text-sm">Selecciona un día para editar.</div>}
                     </Card>
                 </div>
 
@@ -405,14 +383,12 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                             <button onClick={() => setPlanSubTab('history')} className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded-md transition-all ${planSubTab === 'history' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500'}`}><History size={12}/> Histórico</button>
                         </div>
                     </div>
-
                     <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
                         <div className="max-h-[600px] overflow-y-auto divide-y">
                             {visiblePlan.length === 0 ? <div className="p-8 text-center text-slate-400 text-sm italic">No hay días en esta vista.</div> : (
                                 visiblePlan.map(day => {
                                     const content = dailyContentMap[day.id] || {};
                                     const isEnabled = content.isEnabled;
-                                    const extrasCount = content.extraReadings?.length || 0;
                                     const isPast = day.date < todayStr;
                                     const isToday = day.date === todayStr;
                                     const isEffectivelyActive = isEnabled || isPast || isToday;
@@ -425,14 +401,10 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                                     {isPast ? <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">HISTÓRICO</span> : (isEffectivelyActive ? <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700"><CheckCircle size={10} className="mr-1"/> ACTIVO</span> : <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-500"><Lock size={10} className="mr-1"/> INACTIVO</span>)}
                                                 </div>
                                                 <div className="font-bold text-slate-800 text-sm">{day.corePassage}</div>
-                                                <div className="flex gap-2 mt-1">
-                                                    {content.observation && <span className="text-[10px] bg-sky-50 text-sky-600 px-1 rounded border border-sky-100">Comentario</span>}
-                                                    {extrasCount > 0 && <span className="text-[10px] bg-amber-50 text-amber-600 px-1 rounded border border-amber-100">+{extrasCount} Extras</span>}
-                                                </div>
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <button onClick={() => sendWhatsAppNotification(day, content)} className="p-2 text-emerald-500 hover:bg-emerald-50 rounded"><MessageCircle size={18}/></button>
-                                                <button onClick={() => toggleDayEnabled(day, isEnabled)} disabled={isPast} className={`p-2 rounded hover:bg-slate-200 ${isPast ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEffectivelyActive ? 'text-emerald-500' : 'text-red-500')}`}>{isEffectivelyActive ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}</button>
+                                                <button onClick={() => toggleDayEnabled(day, isEnabled)} disabled={day.date <= todayStr} className={`p-2 rounded hover:bg-slate-200 ${day.date <= todayStr ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEffectivelyActive ? 'text-emerald-500' : 'text-red-500')}`}>{isEffectivelyActive ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}</button>
                                                 <button onClick={() => startEditing(day)} className="p-2 text-sky-500 hover:bg-sky-50 rounded"><Edit3 size={18}/></button>
                                             </div>
                                         </div>
@@ -447,21 +419,20 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
 
         {activeTab === 'users' && (
             <div className="space-y-4">
-                {/* BOTÓN DE ACTUALIZACIÓN MASIVA */}
-                <Card className="p-4 bg-amber-50 border-amber-200">
-                    <div className="flex flex-col md:flex-row justify-between items-center gap-4">
-                        <div>
-                            <h3 className="font-bold text-amber-800 text-sm flex items-center gap-2"><Zap size={16}/> Herramienta de Mantenimiento Masivo</h3>
-                            <p className="text-xs text-amber-700 mt-1">Usa esto si necesitas reiniciar o corregir la fecha de inicio de TODOS los usuarios registrados.</p>
-                        </div>
-                        <Button variant="danger" onClick={setMassiveStartDate} className="text-xs w-full md:w-auto bg-amber-100 text-amber-800 border-amber-300 hover:bg-amber-200">
-                            ⚡ Establecer Inicio Masivo 2026
-                        </Button>
+                <div className="flex gap-4 items-center justify-between bg-white p-2 rounded-lg border shadow-sm">
+                    <div className="flex gap-2">
+                         <button onClick={() => setUserTab('pending')} className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-md transition-all ${userTab === 'pending' ? 'bg-red-50 text-red-600 shadow-sm border border-red-100' : 'text-slate-500 hover:bg-slate-50'}`}>
+                             <UserPlus size={16}/> Pendientes {pendingUsers.length > 0 && <span className="bg-red-500 text-white text-[10px] px-1.5 rounded-full">{pendingUsers.length}</span>}
+                         </button>
+                         <button onClick={() => setUserTab('approved')} className={`flex items-center gap-2 px-4 py-2 text-sm font-bold rounded-md transition-all ${userTab === 'approved' ? 'bg-emerald-50 text-emerald-600 shadow-sm border border-emerald-100' : 'text-slate-500 hover:bg-slate-50'}`}>
+                             <UserCheck size={16}/> Aprobados ({approvedUsers.length})
+                         </button>
                     </div>
-                </Card>
+                    <Button variant="danger" onClick={setMassiveStartDate} className="text-[10px] py-1 h-8">⚡ Reset 2026</Button>
+                </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {allUsers.map(u => (
+                    {visibleUsersList.map(u => (
                         <Card key={u.id} className="p-4 flex flex-col gap-3">
                             <div className="flex items-center gap-3">
                                 <img src={u.photoURL} className="w-10 h-10 rounded-full"/>
@@ -480,42 +451,39 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                             </div>
                         </Card>
                     ))}
+                    {visibleUsersList.length === 0 && <div className="col-span-full text-center py-10 text-slate-400 italic">No hay usuarios en esta sección.</div>}
                 </div>
             </div>
         )}
 
         {activeTab === 'stats' && (
             <div className="space-y-6">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    <Card className="p-4 text-center bg-sky-50 border-sky-100">
-                       <div className="text-2xl font-bold text-sky-600">365</div>
-                       <div className="text-xs uppercase text-sky-400 font-bold">Días Plan</div>
-                    </Card>
-                    <Card className="p-4 text-center">
-                       <div className="text-2xl font-bold text-slate-600">{allUsers.length}</div>
-                       <div className="text-xs uppercase text-slate-400 font-bold">Usuarios</div>
-                    </Card>
-                </div>
-
-                <div className="flex justify-center gap-4 mb-4">
-                    <button onClick={() => setStatsMode('byUser')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byUser' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Usuario</button>
-                    <button onClick={() => setStatsMode('byReading')} className={`px-4 py-2 text-sm font-bold rounded-full transition-all ${statsMode === 'byReading' ? 'bg-sky-600 text-white shadow' : 'bg-slate-100 text-slate-500'}`}>Por Lectura</button>
+                <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
+                    <div className="flex bg-slate-100 rounded-lg p-1">
+                        <button onClick={() => setStatsMode('byUser')} className={`px-4 py-2 text-sm font-bold rounded-md transition-all ${statsMode === 'byUser' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-500'}`}>Por Usuario</button>
+                        <button onClick={() => setStatsMode('byReading')} className={`px-4 py-2 text-sm font-bold rounded-md transition-all ${statsMode === 'byReading' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-500'}`}>Por Lectura</button>
+                    </div>
+                    <div className="relative w-full md:w-64">
+                        <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
+                        <input 
+                            type="text" 
+                            placeholder={statsMode === 'byUser' ? "Buscar usuario..." : "Buscar libro/fecha..."}
+                            className="w-full pl-9 pr-4 py-2 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-sky-500"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                        />
+                    </div>
                 </div>
 
                 {statsMode === 'byUser' ? (
                     <Card className="overflow-hidden">
-                        <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm flex justify-between items-center">
-                            <span>Progreso por Usuario (Base 365 días)</span>
-                            <span className="text-xs font-normal text-slate-500">Clic para ver pendientes</span>
-                        </div>
+                        <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Progreso por Usuario</div>
                         <div className="divide-y max-h-96 overflow-y-auto">
-                            {allUsers.map(u => {
+                            {filteredStatsUsers.map(u => {
                                 const userReadIds = allCompletions.filter(c => c.userId === u.uid && c.readingId.startsWith(new Date().getFullYear())).map(c => c.readingId);
                                 const count = userReadIds.length;
                                 const percent = Math.min(100, Math.round((count / 365) * 100));
                                 const isExpanded = expandedStatItem === u.id;
-                                
-                                const todayStr = getLocalDate();
                                 const pendingReadings = staticPlan.filter(day => {
                                     if (u.planStartDate && day.date < u.planStartDate) return false;
                                     return day.date <= todayStr && !userReadIds.includes(day.id);
@@ -524,15 +492,12 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                 return (
                                     <div key={u.id}>
                                         <div className="p-3 flex items-center justify-between hover:bg-slate-50 cursor-pointer" onClick={() => toggleStatExpand(u.id)}>
-                                            <div className="flex-1 flex flex-col">
-                                                <div className="flex items-center gap-3">
-                                                    <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
-                                                    <div>
-                                                        <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
-                                                        <div className="text-xs text-slate-400">{count} días completados</div>
-                                                    </div>
+                                            <div className="flex items-center gap-3">
+                                                <img src={u.photoURL} className="w-8 h-8 rounded-full"/>
+                                                <div>
+                                                    <div className="text-sm font-bold text-slate-700">{u.displayName}</div>
+                                                    <div className="text-xs text-slate-400">{count} días • {u.planStartDate || 'Sin fecha'}</div>
                                                 </div>
-                                                {u.planStartDate && <div className="text-[10px] text-slate-400 mt-1 ml-11">Inicio Plan: {u.planStartDate}</div>}
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <span className="text-xs font-bold text-slate-600">{percent}%</span>
@@ -542,11 +507,11 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                         </div>
                                         {isExpanded && (
                                             <div className="bg-red-50 p-3 text-xs border-t border-red-100">
-                                                <div className="font-bold text-red-700 mb-2 flex items-center gap-1"><AlertCircle size={12}/> Lecturas Pendientes ({pendingReadings.length})</div>
-                                                {pendingReadings.length === 0 ? <div className="text-emerald-600 font-bold">¡Está al día!</div> : (
+                                                <div className="font-bold text-red-700 mb-2 flex items-center gap-1"><AlertCircle size={12}/> Pendientes ({pendingReadings.length})</div>
+                                                {pendingReadings.length === 0 ? <div className="text-emerald-600 font-bold">¡Al día!</div> : (
                                                     <ul className="grid grid-cols-2 gap-1 text-slate-600">
-                                                        {pendingReadings.slice(0, 20).map(r => <li key={r.id} className="truncate">• {r.displayDate}: {r.corePassage}</li>)}
-                                                        {pendingReadings.length > 20 && <li className="text-red-400 font-bold">... y {pendingReadings.length - 20} más.</li>}
+                                                        {pendingReadings.slice(0, 10).map(r => <li key={r.id} className="truncate">• {r.displayDate}: {r.corePassage}</li>)}
+                                                        {pendingReadings.length > 10 && <li className="text-red-400 font-bold">... y {pendingReadings.length - 10} más.</li>}
                                                     </ul>
                                                 )}
                                             </div>
@@ -558,18 +523,13 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                     </Card>
                 ) : (
                     <Card className="overflow-hidden">
-                        <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm flex justify-between items-center">
-                            <span>Estado por Lectura</span>
-                            <span className="text-xs font-normal text-slate-500">Clic para ver faltantes</span>
-                        </div>
+                        <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Estado por Lectura</div>
                         <div className="divide-y max-h-96 overflow-y-auto">
-                            {staticPlan.map(day => {
+                            {filteredStatsReadings.map(day => {
                                 const readers = allCompletions.filter(c => c.readingId === day.id).map(c => c.userId);
                                 const count = readers.length;
                                 const percent = Math.round((count / Math.max(1, allUsers.length)) * 100);
                                 const isExpanded = expandedStatItem === day.id;
-
-                                // Calcular usuarios faltantes
                                 const missingUsers = allUsers.filter(u => !readers.includes(u.uid));
 
                                 return (
@@ -580,12 +540,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                                 <div className="text-xs text-slate-400">{day.displayDate}</div>
                                             </div>
                                             <div className="flex items-center gap-3">
-                                                <div className="text-right">
-                                                    <div className="text-xs font-bold text-slate-600">{count} / {allUsers.length}</div>
-                                                    <div className="w-20 bg-slate-100 rounded-full h-1.5 mt-1">
-                                                        <div className="bg-sky-500 h-1.5 rounded-full" style={{ width: `${percent}%` }}></div>
-                                                    </div>
-                                                </div>
+                                                <div className="text-right"><div className="text-xs font-bold text-slate-600">{count} / {allUsers.length}</div></div>
                                                 <ChevronDown size={16} className={`text-slate-400 transform transition-transform ${isExpanded ? 'rotate-180' : ''}`}/>
                                             </div>
                                         </div>
@@ -594,17 +549,11 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                                 <div className="flex gap-4">
                                                     <div className="flex-1">
                                                         <div className="font-bold text-emerald-600 mb-1">Completado ({count})</div>
-                                                        <div className="flex flex-wrap gap-1">
-                                                            {allUsers.filter(u => readers.includes(u.uid)).map(u => <span key={u.id} className="bg-white border border-emerald-100 px-1.5 py-0.5 rounded text-emerald-700">{u.displayName.split(' ')[0]}</span>)}
-                                                        </div>
+                                                        <div className="flex flex-wrap gap-1">{allUsers.filter(u => readers.includes(u.uid)).map(u => <span key={u.id} className="bg-white border border-emerald-100 px-1.5 py-0.5 rounded text-emerald-700">{u.displayName.split(' ')[0]}</span>)}</div>
                                                     </div>
                                                     <div className="flex-1 border-l pl-4 border-slate-200">
-                                                        <div className="font-bold text-red-500 mb-1">Pendiente ({missingUsers.length})</div>
-                                                        <div className="flex flex-wrap gap-1">
-                                                            {missingUsers.map(u => (
-                                                                <span key={u.id} className="bg-white border border-red-100 px-1.5 py-0.5 rounded text-red-600">{u.displayName.split(' ')[0]}</span>
-                                                            ))}
-                                                        </div>
+                                                        <div className="font-bold text-red-500 mb-1">Faltan ({missingUsers.length})</div>
+                                                        <div className="flex flex-wrap gap-1">{missingUsers.slice(0, 10).map(u => <span key={u.id} className="bg-white border border-red-100 px-1.5 py-0.5 rounded text-red-600">{u.displayName.split(' ')[0]}</span>)}</div>
                                                     </div>
                                                 </div>
                                             </div>
@@ -646,6 +595,14 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
     });
   }, [staticPlan, dailyContentMap]);
 
+  // NUEVO: Plan visible ordenado según el filtro (DESC para Completados)
+  const visiblePlan = useMemo(() => {
+      if (userFilter === 'completed') {
+          return [...userPlan].reverse(); 
+      }
+      return userPlan;
+  }, [userPlan, userFilter]);
+
   const toggleCompletion = async (readingId) => {
       if (!activeUid) return;
       const isComplete = completionsMap[readingId];
@@ -653,16 +610,12 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
       const docRef = doc(db, 'artifacts', APP_ID, 'completions', id);
 
       if (isComplete) {
-          // --- NUEVA VALIDACIÓN ---
           // Verificar si hay lecturas posteriores completadas
           const hasFutureReadings = Object.keys(completionsMap).some(completedDate => completedDate > readingId);
-          
           if (hasFutureReadings) {
-              alert("No puedes desmarcar esta lectura porque ya tienes lecturas posteriores completadas. Para mantener el orden, debes desmarcar las más recientes primero.");
+              alert("No puedes desmarcar esta lectura porque ya tienes lecturas posteriores completadas.");
               return;
           }
-          // ------------------------
-
           if (!confirm("¿Desmarcar lectura? Restará progreso.")) return;
           await deleteDoc(docRef);
       } else {
@@ -682,11 +635,57 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
   };
 
   const sendWhatsAppNotification = (day) => {
-      // Mensaje de cumplimiento para el usuario
+      // Mensaje de cumplimiento para el usuario SIN LINK
       let msg = `✅ *¡Lectura Completada!*\n\nHe terminado mi lectura diaria del plan *Teología Paulina*.\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Pasaje:* ${day.corePassage}`;
-      msg += `\n\n🔗 _${APP_URL}_`;
       window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
+
+  // --- CÁLCULO DE ERROR DE CONEXIÓN MEJORADO ---
+  const handleAuthError = (error) => {
+      let msg = "Error al iniciar sesión.";
+      if (error.code === 'auth/popup-closed-by-user') {
+          msg = "Cerraste la ventana de inicio de sesión antes de terminar.";
+      } else if (error.code === 'auth/network-request-failed') {
+          msg = "Problema de conexión a internet. Verifica tu red.";
+      } else if (error.code === 'auth/unauthorized-domain') {
+          msg = `El dominio no está autorizado en Firebase. Admin: Agrega '${window.location.hostname}' en la consola de Firebase.`;
+      } else {
+          msg = `Error: ${error.message}`;
+      }
+      alert(msg);
+  };
+
+  const handleGoogleLogin = async () => {
+    setLoading(true);
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      
+      const userRef = doc(db, 'artifacts', APP_ID, 'users', result.user.uid);
+      const userSnap = await getDoc(userRef);
+      if (!userSnap.exists()) {
+          const q = query(collection(db, 'artifacts', APP_ID, 'users'));
+          const snap = await getDocs(q);
+          const isFirst = snap.empty;
+          
+          await setDoc(userRef, {
+                uid: result.user.uid,
+                displayName: result.user.displayName,
+                email: result.user.email,
+                photoURL: result.user.photoURL,
+                role: isFirst ? 'admin' : 'user',
+                isApproved: isFirst ? true : false,
+                planStartDate: '2026-01-01',
+                createdAt: serverTimestamp()
+          });
+      }
+    } catch (error) {
+      console.error(error);
+      handleAuthError(error); // USAR NUEVO MANEJADOR DE ERRORES
+      setLoading(false);
+    }
+  };
+
 
   return (
     <div className="max-w-3xl mx-auto p-4 space-y-6">
@@ -778,7 +777,7 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
         </div>
 
         <div className="space-y-4">
-            {userPlan.map((day, index) => {
+            {visiblePlan.map((day, index) => {
                 const isComplete = completionsMap[day.id];
                 
                 // --- FILTROS ---
@@ -793,47 +792,39 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
 
                 const readingDate = new Date(day.date + 'T12:00:00');
                 const isFuture = readingDate > todayDate;
-                const prevDayId = index > 0 ? userPlan[index-1].id : null;
-                const isSeqLocked = prevDayId && !completionsMap[prevDayId];
                 const isAdminLocked = !day.isEnabled;
                 
-                // El bloqueo lógico (candado) sigue aplicando aunque sea un "late joiner" si intenta saltar en el futuro
-                // Pero si está en el pasado (histórico habilitado), no debería bloquearse por "secuencia" si está antes de su fecha de inicio...
-                // Simplificación: Mantener bloqueo secuencial estricto PARA LO QUE VE.
-                // Si ocultamos lo anterior, el 'prevDayId' visible es el anterior visible?
-                // No, el bloqueo secuencial en un plan anual suele ser sobre el día inmediatamente anterior del calendario.
-                // Si ocultamos los días viejos, el usuario verá el primer día de "su plan". Ese primer día debería estar desbloqueado.
+                // LÓGICA DE VISIBILIDAD UNIFICADA
+                const isToday = day.date === todayStr;
+                const isPast = day.date < todayStr;
+                // Si es fecha pasada, siempre está visible. Si es futuro, depende del admin.
+                const isEffectivelyEnabled = isPast || isToday || day.isEnabled;
+
+                // LÓGICA DE CANDADO (SEQUENTIAL LOCK) - INDEPENDIENTE DEL ORDEN VISUAL
+                let isLocked = !isEffectivelyEnabled; 
                 
-                let isLocked = isFuture || isAdminLocked;
-                
-                // Lógica de Bloqueo Secuencial Inteligente
-                let isPrevComplete = true; // Por defecto asumimos que el anterior está ok (caso primer día o jump-in)
-                
-                if (index > 0) {
-                    const prevDay = userPlan[index - 1];
-                    
+                // Verificación de secuencia (SOLO SI NO ES PASADO)
+                // Usamos staticPlan[0].id para detectar si es el primer día absoluto del plan
+                if (day.id !== staticPlan[0].id) {
+                    const prevDate = getPrevDateStr(day.date);
+                    let isPrevOk = !!completionsMap[prevDate];
+
                     if (user.planStartDate) {
-                        // Si el usuario tiene fecha de inicio personalizada:
-                        // A. Si el día ANTERIOR es menor a su fecha de inicio, se considera "completado/saltado" automáticamente.
-                        if (prevDay.date < user.planStartDate) {
-                            isPrevComplete = true;
-                        } else {
-                            // B. Si el día ANTERIOR está dentro de su plan activo, verificamos si realmente lo completó.
-                            isPrevComplete = !!completionsMap[prevDay.id];
+                        // Si la lectura anterior es MENOR a la fecha de inicio, se asume completada/saltada.
+                        if (prevDate < user.planStartDate) {
+                            isPrevOk = true;
                         }
-                    } else {
-                        // Usuario normal: verificación estándar
-                        isPrevComplete = !!completionsMap[prevDay.id];
                     }
+                    
+                    if (!isPrevOk) isLocked = true;
                 }
 
-                // Aplicar bloqueo si el anterior no está "completo" (ya sea real o virtualmente)
-                if (!isPrevComplete) isLocked = true;
-                
-                // Ocultar futuro lejano en pendientes
+                // SIEMPRE desbloquear fechas pasadas (Catch-up mode)
+                if (isPast) isLocked = false;
+
                 const diffDays = (readingDate - todayDate) / (1000 * 60 * 60 * 24);
                 if (userFilter === 'pending' && diffDays > 3) return null; 
-                if (isAdminLocked && userFilter === 'pending' && diffDays > 0) return null;
+                if (!isEffectivelyEnabled && userFilter === 'pending' && diffDays > 0) return null;
 
                 const comments = commentsMap[day.id] || [];
                 const showComments = activeReadingIdForComment === day.id;
@@ -844,10 +835,10 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                             {isLocked && (
                                 <div className="bg-slate-100 p-1 text-center text-[10px] uppercase font-bold text-slate-400 flex justify-center items-center gap-1 border-b">
                                     <Lock size={10}/> 
-                                    {isAdminLocked ? 'Aún no disponible' : (isFuture ? `Disponible el ${day.displayDate}` : 'Completa la anterior')}
+                                    {!isEffectivelyEnabled ? 'Aún no disponible' : (isFuture ? `Disponible el ${day.displayDate}` : 'Completa la anterior')}
                                 </div>
                             )}
-                            <div className={`p-4 flex justify-between items-start ${day.isEnabled ? 'bg-white border-l-4 border-sky-500' : 'bg-slate-50 border-l-4 border-slate-300'}`}>
+                            <div className={`p-4 flex justify-between items-start ${isEffectivelyEnabled ? 'bg-white border-l-4 border-sky-500' : 'bg-slate-50 border-l-4 border-slate-300'}`}>
                                 <div className="flex-1">
                                     <div className="flex items-center gap-2 mb-1">
                                       <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{day.displayDate}</span>
@@ -1151,8 +1142,6 @@ export default function App() {
                 photoURL: result.user.photoURL,
                 role: isFirst ? 'admin' : 'user',
                 isApproved: isFirst ? true : false,
-                // Default start date for new users
-                planStartDate: '2026-01-01',
                 createdAt: serverTimestamp()
           });
       }
