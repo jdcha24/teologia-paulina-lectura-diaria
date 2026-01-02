@@ -260,7 +260,6 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
 
   const sendWhatsAppNotification = (day, content) => {
       let msg = `*Plan Bíblico Diario*\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Lectura:* ${day.corePassage}`;
-      if (content?.observation) msg += `\n\n💬 *Pastoral:* _"${content.observation}"_`;
       if (content?.extraReadings?.length > 0) msg += `\n\n➕ *Material Extra:* ${content.extraReadings.length} recursos disponibles.`;
       // LINK ELIMINADO A PETICIÓN
       window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
