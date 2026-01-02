@@ -26,7 +26,7 @@ import {
 } from 'firebase/firestore';
 import { 
   BookOpen, CheckCircle, MessageSquare, Users, LogOut, Calendar, Send, Loader2, 
-  BarChart2, Edit3, ChevronDown, Youtube, ScrollText, 
+  BarChart, Edit, ChevronDown, Youtube, ScrollText, 
   Shield, ShieldCheck, Bell, X, 
   AlertTriangle, FileText, Link as LinkIcon, Activity,
   Flame, Award, Crown, Star, Medal, Lock, Percent, MessageCircle, ToggleLeft, ToggleRight, Plus, Trash2,
@@ -96,6 +96,7 @@ const generateStaticPlan = () => {
     const year = new Date().getFullYear();
 
     for (let d = 0; d < totalDays; d++) {
+        // Uso de fecha local para evitar problemas de zona horaria (ej. UTC vs Local)
         const dateObj = new Date(year, 0, d + 1);
         const y = dateObj.getFullYear();
         const m = String(dateObj.getMonth() + 1).padStart(2, '0');
@@ -260,7 +261,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
 
   const sendWhatsAppNotification = (day, content) => {
       let msg = `*Plan Bíblico Diario*\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Lectura:* ${day.corePassage}`;
-      if (content?.observation) msg += `\n\n💬 *Pastoral:* _"${content.observation}"_`;
+      // Comentario pastoral eliminado a petición
       if (content?.extraReadings?.length > 0) msg += `\n\n➕ *Material Extra:* ${content.extraReadings.length} recursos disponibles.`;
       // LINK ELIMINADO A PETICIÓN
       window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
@@ -314,7 +315,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                 <Button variant={activeTab==='users'?'primary':'ghost'} onClick={()=>setActiveTab('users')} className="text-sm"><Users size={16} className="mr-2"/> Usuarios</Button>
                 {pendingUsers.length > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full animate-pulse">{pendingUsers.length}</span>}
             </div>
-            <Button variant={activeTab==='stats'?'primary':'ghost'} onClick={()=>setActiveTab('stats')} className="text-sm"><BarChart2 size={16} className="mr-2"/> Progreso</Button>
+            <Button variant={activeTab==='stats'?'primary':'ghost'} onClick={()=>setActiveTab('stats')} className="text-sm"><BarChart size={16} className="mr-2"/> Progreso</Button>
         </div>
 
         {activeTab === 'reading' && (
@@ -322,7 +323,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                 <div className="lg:col-span-1">
                     <Card className="p-5 sticky top-24">
                         <h2 className="font-bold text-lg mb-4 text-slate-800 flex items-center gap-2">
-                            <Edit3 size={20} className="text-sky-600"/> 
+                            <Edit size={20} className="text-sky-600"/> 
                             {editingDay ? `Editando: ${editingDay.displayDate}` : 'Selecciona un día'}
                         </h2>
                         
@@ -405,7 +406,7 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                             <div className="flex items-center gap-2">
                                                 <button onClick={() => sendWhatsAppNotification(day, content)} className="p-2 text-emerald-500 hover:bg-emerald-50 rounded"><MessageCircle size={18}/></button>
                                                 <button onClick={() => toggleDayEnabled(day, isEnabled)} disabled={day.date <= todayStr} className={`p-2 rounded hover:bg-slate-200 ${day.date <= todayStr ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEffectivelyActive ? 'text-emerald-500' : 'text-red-500')}`}>{isEffectivelyActive ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}</button>
-                                                <button onClick={() => startEditing(day)} className="p-2 text-sky-500 hover:bg-sky-50 rounded"><Edit3 size={18}/></button>
+                                                <button onClick={() => startEditing(day)} className="p-2 text-sky-500 hover:bg-sky-50 rounded"><Edit size={18}/></button>
                                             </div>
                                         </div>
                                     );
@@ -777,7 +778,7 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
         </div>
 
         <div className="space-y-4">
-            {visiblePlan.map((day, index) => {
+            {userPlan.map((day, index) => {
                 const isComplete = completionsMap[day.id];
                 
                 // --- FILTROS ---
@@ -792,6 +793,8 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
 
                 const readingDate = new Date(day.date + 'T12:00:00');
                 const isFuture = readingDate > todayDate;
+                const prevDayId = index > 0 ? userPlan[index-1].id : null;
+                const isSeqLocked = prevDayId && !completionsMap[prevDayId];
                 const isAdminLocked = !day.isEnabled;
                 
                 // LÓGICA DE VISIBILIDAD UNIFICADA
@@ -934,304 +937,6 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                 </div>
             )}
         </div>
-    </div>
-  );
-};
-
-// --- MAIN APP ---
-export default function App() {
-  const [user, setUser] = useState(null);
-  const [userData, setUserData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  
-  // Data State
-  const [staticPlan] = useState(generateStaticPlan());
-  const [dailyContentMap, setDailyContentMap] = useState({});
-  const [allUsers, setAllUsers] = useState([]);
-  const [allCompletions, setAllCompletions] = useState([]); 
-  const [completionsMap, setCompletionsMap] = useState({});
-  const [commentsMap, setCommentsMap] = useState({});
-  
-  // Calculated State
-  const [streak, setStreak] = useState(0);
-  const [bibleProgress, setBibleProgress] = useState(0);
-
-  // AUTH
-  useEffect(() => {
-    if (!document.querySelector('#tailwind-cdn')) {
-        const script = document.createElement('script');
-        script.id = 'tailwind-cdn';
-        script.src = "https://cdn.tailwindcss.com";
-        document.head.appendChild(script);
-    }
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      if (!currentUser) { setLoading(false); setUserData(null); }
-    });
-    return () => unsubscribe();
-  }, []);
-
-  // FAVICON INJECTION
-  useEffect(() => {
-    const link = document.querySelector("link[rel*='icon']") || document.createElement('link');
-    link.type = 'image/jpeg';
-    link.rel = 'icon';
-    link.href = FAVICON_URL;
-    document.getElementsByTagName('head')[0].appendChild(link);
-    
-    // Inject PWA Manifest
-    const manifestLink = document.querySelector("link[rel*='manifest']") || document.createElement('link');
-    manifestLink.rel = 'manifest';
-    manifestLink.href = 'data:application/manifest+json,' + encodeURIComponent(JSON.stringify({
-        "name": "Teología Paulina",
-        "short_name": "Teología Paulina",
-        "start_url": ".",
-        "display": "standalone",
-        "theme_color": "#0ea5e9",
-        "background_color": "#ffffff",
-        "icons": [
-            { "src": FAVICON_URL, "sizes": "192x192", "type": "image/jpeg" },
-            { "src": FAVICON_URL, "sizes": "512x512", "type": "image/jpeg" }
-        ]
-    }));
-    document.head.appendChild(manifestLink);
-
-    // Meta tags for PWA
-    const metaTheme = document.querySelector("meta[name='theme-color']") || document.createElement('meta');
-    metaTheme.name = 'theme-color';
-    metaTheme.content = '#0ea5e9';
-    document.head.appendChild(metaTheme);
-
-    const metaApple = document.querySelector("meta[name='apple-mobile-web-app-capable']") || document.createElement('meta');
-    metaApple.name = 'apple-mobile-web-app-capable';
-    metaApple.content = 'yes';
-    document.head.appendChild(metaApple);
-
-  }, []);
-
-  // PROFILE
-  useEffect(() => {
-    if (!user) return;
-    const userRef = doc(db, 'artifacts', APP_ID, 'users', user.uid);
-    const unsubscribe = onSnapshot(userRef, (docSnap) => {
-        if (docSnap.exists()) setUserData(docSnap.data());
-        else setUserData(null);
-        setLoading(false);
-    });
-    return () => unsubscribe();
-  }, [user]);
-
-  // LOAD DATA (Solo si está aprobado)
-  useEffect(() => {
-    if (!userData?.isApproved) return;
-    
-    const unsubDaily = onSnapshot(query(collection(db, 'artifacts', APP_ID, 'daily_content')), snap => {
-        const map = {};
-        snap.docs.forEach(d => map[d.id] = d.data());
-        setDailyContentMap(map);
-    });
-
-    const unsubComments = onSnapshot(query(collection(db, 'artifacts', APP_ID, 'comments'), orderBy('createdAt', 'desc')), snap => {
-        const map = {};
-        snap.docs.forEach(doc => {
-            const d = doc.data();
-            if (!map[d.readingId]) map[d.readingId] = [];
-            map[d.readingId].push({id: doc.id, ...d});
-        });
-        setCommentsMap(map);
-    });
-
-    const unsubCompletions = onSnapshot(query(collection(db, 'artifacts', APP_ID, 'completions'), where('userId', '==', userData.uid)), snap => {
-        const map = {};
-        const datesSet = new Set();
-        let count = 0;
-        
-        snap.docs.forEach(doc => {
-            const data = doc.data();
-            map[data.readingId] = true;
-            
-            // Recolectar fechas únicas para la racha
-            if (data.completedAt) {
-                const date = data.completedAt.toDate();
-                const year = date.getFullYear();
-                const month = String(date.getMonth() + 1).padStart(2, '0');
-                const day = String(date.getDate()).padStart(2, '0');
-                datesSet.add(`${year}-${month}-${day}`);
-            }
-
-            // Contar para progreso anual
-            if (data.readingId.startsWith(`${new Date().getFullYear()}-`)) {
-                count++;
-            }
-        });
-        setCompletionsMap(map);
-        
-        // --- CÁLCULO DE RACHA REAL (DÍAS CONSECUTIVOS) ---
-        let currentStreak = 0;
-        const today = new Date();
-        
-        // Función para checkear si una fecha está en el set
-        const checkDate = (d) => {
-            const y = d.getFullYear();
-            const m = String(d.getMonth() + 1).padStart(2, '0');
-            const day = String(d.getDate()).padStart(2, '0');
-            return datesSet.has(`${y}-${m}-${day}`);
-        };
-
-        // 1. Ver si hoy contó
-        let cursor = new Date(today);
-        if (!checkDate(cursor)) {
-            // Si hoy no está, ver si ayer está (para no romper la racha visualmente aún)
-            cursor.setDate(cursor.getDate() - 1);
-            if (!checkDate(cursor)) {
-                cursor = null; // Ni hoy ni ayer, racha rota
-            }
-        }
-
-        // 2. Contar hacia atrás
-        if (cursor) {
-            currentStreak = 1; // Ya encontramos uno (hoy o ayer)
-            while (true) {
-                cursor.setDate(cursor.getDate() - 1);
-                if (checkDate(cursor)) {
-                    currentStreak++;
-                } else {
-                    break;
-                }
-            }
-        }
-        
-        setStreak(currentStreak);
-        setBibleProgress(Math.min(100, Math.round((count / 365) * 100)));
-    });
-
-    // Admin data load
-    let unsubAllUsers = () => {};
-    let unsubAllCompletions = () => {};
-    
-    if (userData.role === 'admin') {
-         unsubAllUsers = onSnapshot(collection(db, 'artifacts', APP_ID, 'users'), s => {
-            setAllUsers(s.docs.map(d => ({id: d.id, ...d.data()})));
-        });
-         unsubAllCompletions = onSnapshot(collection(db, 'artifacts', APP_ID, 'completions'), s => {
-            setAllCompletions(s.docs.map(d => d.data()));
-        });
-    }
-
-    return () => { unsubDaily(); unsubComments(); unsubCompletions(); unsubAllUsers(); unsubAllCompletions(); };
-  }, [userData]);
-
-  const handleGoogleLogin = async () => {
-    setLoading(true);
-    try {
-      const provider = new GoogleAuthProvider();
-      const result = await signInWithPopup(auth, provider);
-      
-      const userRef = doc(db, 'artifacts', APP_ID, 'users', result.user.uid);
-      const userSnap = await getDoc(userRef);
-      if (!userSnap.exists()) {
-          // Check if first user
-          const q = query(collection(db, 'artifacts', APP_ID, 'users'));
-          const snap = await getDocs(q);
-          const isFirst = snap.empty;
-          
-          await setDoc(userRef, {
-                uid: result.user.uid,
-                displayName: result.user.displayName,
-                email: result.user.email,
-                photoURL: result.user.photoURL,
-                role: isFirst ? 'admin' : 'user',
-                isApproved: isFirst ? true : false,
-                createdAt: serverTimestamp()
-          });
-      }
-    } catch (error) {
-      console.error(error);
-      alert("Error de conexión");
-      setLoading(false);
-    }
-  };
-
-  const handleLogout = async () => { await signOut(auth); window.location.reload(); };
-
-  // --- RENDERING ---
-  const [view, setView] = useState('dashboard'); // 'dashboard' or 'admin'
-
-  if (loading) return <div className="h-screen flex items-center justify-center bg-sky-50"><Loader2 className="animate-spin text-sky-600" size={48}/></div>;
-
-  if (!user) return (
-    <div className="min-h-screen w-full bg-gradient-to-br from-sky-500 to-sky-600 flex items-center justify-center p-4">
-      <Card className="w-full max-w-md p-8 border-none shadow-2xl">
-        <div className="text-center mb-8">
-          <div className="w-24 h-24 mx-auto mb-4 bg-white rounded-full p-2"><img src={LOGO_URL} className="w-full h-full object-contain"/></div>
-          <h1 className="text-2xl font-bold text-slate-800 font-serif">Teología Paulina</h1>
-          <p className="text-sky-600 font-bold uppercase text-xs mt-2">Biblia en un Año</p>
-        </div>
-        <Button onClick={handleGoogleLogin} variant="google" className="w-full py-3 flex gap-2 justify-center">
-             <svg className="w-5 h-5" viewBox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" /><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" /><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" /><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" /></svg>
-             <span className="font-bold">Ingresar con Google</span>
-        </Button>
-      </Card>
-    </div>
-  );
-
-  if (userData && !userData.isApproved) return (
-    <div className="h-screen flex items-center justify-center bg-sky-50 p-4">
-        <Card className="max-w-md p-8 text-center">
-            <h2 className="text-xl font-bold text-slate-800 mb-2">Solicitud Recibida</h2>
-            <p className="text-slate-600 mb-6">Hola <b>{userData.displayName}</b>. Tu cuenta será aprobada pronto.</p>
-            <Button onClick={handleLogout} variant="secondary">Cerrar Sesión</Button>
-        </Card>
-    </div>
-  );
-
-  return (
-    <div className="min-h-screen bg-sky-50 pb-20">
-      <header className="bg-white border-b sticky top-0 z-10 px-4 h-16 flex items-center justify-between shadow-sm">
-          <div className="flex items-center gap-2 font-serif font-bold text-slate-800">
-              <img src={LOGO_URL} className="w-8 h-8"/> 
-              <span className="hidden sm:inline">Teología Paulina</span>
-          </div>
-          <div className="flex gap-3 items-center">
-              <a href={YOUTUBE_CHANNEL} target="_blank" rel="noopener noreferrer" className="text-red-600 hover:text-red-700">
-                  <Youtube size={24} />
-              </a>
-              {streak > 0 && (
-                  <div className="flex items-center gap-1 bg-amber-50 px-2 py-1 rounded-full border border-amber-100" title={`${streak} días seguidos`}>
-                      <Flame size={16} className="text-amber-500 fill-amber-500" /><span className="text-xs font-bold text-amber-600">{streak}</span>
-                  </div>
-              )}
-              {userData?.role === 'admin' && (
-                  <div className="flex bg-slate-100 p-1 rounded">
-                      <button onClick={()=>setView('admin')} className={`px-3 py-1 text-xs rounded ${view==='admin'?'bg-white shadow text-sky-600':''}`}>Admin</button>
-                      <button onClick={()=>setView('dashboard')} className={`px-3 py-1 text-xs rounded ${view==='dashboard'?'bg-white shadow text-sky-600':''}`}>Leer</button>
-                  </div>
-              )}
-              <img src={userData?.photoURL} className="w-8 h-8 rounded-full border"/>
-              <button onClick={handleLogout} className="text-slate-400 hover:text-red-500"><LogOut size={20}/></button>
-          </div>
-      </header>
-
-      {view === 'admin' && userData?.role === 'admin' ? (
-        <AdminView 
-            staticPlan={staticPlan} 
-            dailyContentMap={dailyContentMap} 
-            allUsers={allUsers}
-            allCompletions={allCompletions}
-            user={userData}
-        />
-      ) : (
-        <UserView 
-            staticPlan={staticPlan}
-            dailyContentMap={dailyContentMap}
-            completionsMap={completionsMap}
-            commentsMap={commentsMap}
-            bibleProgress={bibleProgress}
-            streak={streak}
-            user={userData}
-            activeUid={user.uid}
-        />
-      )}
     </div>
   );
 }
