@@ -170,19 +170,21 @@ const Card = ({ children, className = '' }) => (
 // --- COMPONENTE ADMIN VIEW ---
 const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user, onBack }) => {
   const [activeTab, setActiveTab] = useState('reading');
-  const [planSubTab, setPlanSubTab] = useState('pending'); 
-  
-  // Estados para Usuarios
-  const [userTab, setUserTab] = useState('pending'); // 'pending' | 'approved'
-  
-  // Estados para Estadísticas
+  const [planSubTab, setPlanSubTab] = useState('pending'); // 'pending' | 'history'
   const [statsMode, setStatsMode] = useState('byUser');
   const [searchQuery, setSearchQuery] = useState(''); // Buscador general
 
   const [editingDay, setEditingDay] = useState(null);
   const [expandedStatItem, setExpandedStatItem] = useState(null);
   
-  const [editForm, setEditForm] = useState({ observation: '', extraReadings: [], isEnabled: false });
+  // Estado del formulario de edición
+  const [editForm, setEditForm] = useState({ 
+    observation: '', 
+    extraReadings: [], // Array de { title, link }
+    isEnabled: false 
+  });
+  
+  // Estado temporal para agregar un nuevo extra
   const [newExtra, setNewExtra] = useState({ title: '', link: '' });
 
   const todayStr = getLocalDate();
@@ -191,6 +193,8 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
   const pendingUsers = useMemo(() => allUsers.filter(u => !u.isApproved), [allUsers]);
   const approvedUsers = useMemo(() => allUsers.filter(u => u.isApproved), [allUsers]);
   
+  // Estado para Usuarios
+  const [userTab, setUserTab] = useState('pending');
   const visibleUsersList = useMemo(() => {
      return userTab === 'pending' ? pendingUsers : approvedUsers;
   }, [userTab, pendingUsers, approvedUsers]);
@@ -208,7 +212,6 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
           d.displayDate.toLowerCase().includes(searchQuery.toLowerCase())
       );
   }, [staticPlan, searchQuery]);
-
 
   const startEditing = (day) => {
     const content = dailyContentMap[day.id] || {};
@@ -253,7 +256,8 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
   };
 
   const toggleDayEnabled = async (day, currentStatus) => {
-    if (day.date <= todayStr) return; // No cambiar pasado ni hoy
+    // REGLA: No deshabilitar días pasados
+    if (day.date < getLocalDate()) return;
 
     const docRef = doc(db, 'artifacts', APP_ID, 'daily_content', day.id);
     await setDoc(docRef, { isEnabled: !currentStatus }, { merge: true });
@@ -261,9 +265,12 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
 
   const sendWhatsAppNotification = (day, content) => {
       let msg = `*Plan Bíblico Diario*\n\n📅 *Fecha:* ${day.displayDate}\n📖 *Lectura:* ${day.corePassage}`;
-      // Comentario pastoral eliminado a petición
+      
+      // ELIMINADO: Comentario pastoral ya no se incluye
+      
       if (content?.extraReadings?.length > 0) msg += `\n\n➕ *Material Extra:* ${content.extraReadings.length} recursos disponibles.`;
-      // LINK ELIMINADO A PETICIÓN
+      
+      msg += `\n\n🔗 *Reporta el Cumplimiento:* ${APP_URL}`;
       window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
@@ -299,10 +306,13 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
     else setExpandedStatItem(id);
   };
 
+  // Filtrar el plan según la sub-pestaña activa
   const visiblePlan = useMemo(() => {
       if (planSubTab === 'history') {
+          // Histórico: Fechas anteriores a hoy, invertidas
           return staticPlan.filter(d => d.date < todayStr).reverse();
       } else {
+          // Pendiente: Hoy en adelante
           return staticPlan.filter(d => d.date >= todayStr);
       }
   }, [staticPlan, planSubTab, todayStr]);
@@ -330,46 +340,85 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                         {editingDay ? (
                             <form onSubmit={saveDayConfig} className="space-y-4">
                                 <div className="bg-sky-50 p-3 rounded text-sm mb-4 border border-sky-100">
-                                    <div className="text-xs font-bold text-sky-600 uppercase mb-1">Lectura Bíblica</div>
+                                    <div className="text-xs font-bold text-sky-600 uppercase mb-1">Lectura Bíblica (Fija)</div>
                                     <div className="font-bold text-slate-800 text-lg">{editingDay.corePassage}</div>
                                 </div>
+
                                 <div>
                                     <label className="text-xs font-bold text-slate-500 uppercase block mb-1">Comentario Pastoral</label>
-                                    <textarea className="w-full p-2 border rounded text-sm h-24" value={editForm.observation} onChange={e=>setEditForm({...editForm, observation:e.target.value})}/>
+                                    <textarea 
+                                        className="w-full p-2 border rounded text-sm h-24" 
+                                        placeholder="Escribe un comentario..."
+                                        value={editForm.observation}
+                                        onChange={e=>setEditForm({...editForm, observation:e.target.value})}
+                                    />
                                 </div>
+
                                 <div className="p-3 bg-amber-50 rounded border border-amber-100">
                                     <label className="text-xs font-bold text-amber-600 uppercase block mb-2">Lecturas Adicionales</label>
+                                    
+                                    {/* Lista de Extras Agregados */}
                                     <div className="space-y-2 mb-3">
                                       {editForm.extraReadings.map((extra, idx) => (
                                         <div key={extra.id || idx} className="flex justify-between items-center bg-white p-2 rounded border border-amber-200 text-sm">
-                                          <div className="truncate"><div className="font-bold text-slate-700">{extra.title}</div></div>
+                                          <div className="truncate">
+                                            <div className="font-bold text-slate-700">{extra.title}</div>
+                                            <div className="text-xs text-slate-400 truncate">{extra.link}</div>
+                                          </div>
                                           <button type="button" onClick={() => removeExtraReading(extra.id)} className="text-red-400 hover:text-red-600 p-1"><Trash2 size={14}/></button>
                                         </div>
                                       ))}
                                     </div>
+
+                                    {/* Inputs para agregar nuevo */}
                                     <div className="flex flex-col gap-2 border-t border-amber-200 pt-2">
-                                      <input className="w-full p-2 border rounded text-sm" placeholder="Título" value={newExtra.title} onChange={e=>setNewExtra({...newExtra, title:e.target.value})}/>
+                                      <input 
+                                          className="w-full p-2 border rounded text-sm" 
+                                          placeholder="Título (Ej: Artículo Teológico)"
+                                          value={newExtra.title}
+                                          onChange={e=>setNewExtra({...newExtra, title:e.target.value})}
+                                      />
                                       <div className="flex gap-2">
-                                        <input className="w-full p-2 border rounded text-sm" placeholder="URL" value={newExtra.link} onChange={e=>setNewExtra({...newExtra, link:e.target.value})}/>
+                                        <input 
+                                            className="w-full p-2 border rounded text-sm" 
+                                            placeholder="URL (Opcional)"
+                                            value={newExtra.link}
+                                            onChange={e=>setNewExtra({...newExtra, link:e.target.value})}
+                                        />
                                         <Button type="button" onClick={addExtraReading} className="px-3" disabled={!newExtra.title}><Plus size={16}/></Button>
                                       </div>
                                     </div>
                                 </div>
+
                                 <div className="flex items-center justify-between py-2 border-t border-b bg-slate-50 px-2 rounded">
                                     <span className="text-sm font-bold text-slate-700">Estado de Publicación</span>
-                                    <button type="button" disabled={editingDay.date <= todayStr} onClick={()=>setEditForm({...editForm, isEnabled: !editForm.isEnabled})} className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${editForm.isEnabled ? 'bg-emerald-500' : 'bg-red-500'} ${editingDay.date <= todayStr ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                    <button 
+                                        type="button" 
+                                        disabled={editingDay.date < todayStr}
+                                        onClick={()=>setEditForm({...editForm, isEnabled: !editForm.isEnabled})}
+                                        className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors ${editForm.isEnabled ? 'bg-emerald-500' : 'bg-red-500'} ${editingDay.date < todayStr ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                    >
                                         <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition-transform ${editForm.isEnabled ? 'translate-x-6' : 'translate-x-1'}`}/>
                                     </button>
                                 </div>
                                 <div className="text-center text-xs font-bold uppercase tracking-wide">
-                                    {editingDay.date <= todayStr ? <span className="text-emerald-600">Visible (Automático)</span> : (editForm.isEnabled ? <span className="text-emerald-600">Visible</span> : <span className="text-red-500">Oculto</span>)}
+                                    {editingDay.date < todayStr ? (
+                                        <span className="text-emerald-600">Visible (Automático por Fecha)</span>
+                                    ) : (
+                                        editForm.isEnabled ? <span className="text-emerald-600">Visible para Usuarios</span> : <span className="text-red-500">Oculto / Bloqueado</span>
+                                    )}
                                 </div>
+
                                 <div className="flex gap-2">
                                     <Button type="button" variant="secondary" onClick={()=>setEditingDay(null)} className="flex-1">Cancelar</Button>
                                     <Button type="submit" variant="primary" className="flex-1">Guardar</Button>
                                 </div>
                             </form>
-                        ) : <div className="text-center py-10 text-slate-400 text-sm">Selecciona un día para editar.</div>}
+                        ) : (
+                            <div className="text-center py-10 text-slate-400 text-sm">
+                                Haz clic en el icono <Edit3 size={14} className="inline"/> de la lista para configurar el contenido del día.
+                            </div>
+                        )}
                     </Card>
                 </div>
 
@@ -379,34 +428,77 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                             <span>Calendario Anual</span>
                             <span className="text-xs bg-sky-100 text-sky-700 px-2 py-1 rounded">365 Días</span>
                         </h3>
+                        {/* SUB-TABS PENDIENTE/HISTÓRICO */}
                         <div className="flex bg-slate-100 rounded-lg p-1">
-                            <button onClick={() => setPlanSubTab('pending')} className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded-md transition-all ${planSubTab === 'pending' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-500'}`}><Clock size={12}/> Pendiente</button>
-                            <button onClick={() => setPlanSubTab('history')} className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded-md transition-all ${planSubTab === 'history' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500'}`}><History size={12}/> Histórico</button>
+                            <button 
+                                onClick={() => setPlanSubTab('pending')}
+                                className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded-md transition-all ${planSubTab === 'pending' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-500'}`}
+                            >
+                                <Clock size={12}/> Pendiente
+                            </button>
+                            <button 
+                                onClick={() => setPlanSubTab('history')}
+                                className={`flex items-center gap-1 px-3 py-1 text-xs font-bold rounded-md transition-all ${planSubTab === 'history' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500'}`}
+                            >
+                                <History size={12}/> Histórico
+                            </button>
                         </div>
                     </div>
+
                     <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
                         <div className="max-h-[600px] overflow-y-auto divide-y">
-                            {visiblePlan.length === 0 ? <div className="p-8 text-center text-slate-400 text-sm italic">No hay días en esta vista.</div> : (
+                            {visiblePlan.length === 0 ? (
+                                <div className="p-8 text-center text-slate-400 text-sm italic">
+                                    No hay días en esta vista.
+                                </div>
+                            ) : (
                                 visiblePlan.map(day => {
                                     const content = dailyContentMap[day.id] || {};
                                     const isEnabled = content.isEnabled;
+                                    const extrasCount = content.extraReadings?.length || 0;
                                     const isPast = day.date < todayStr;
-                                    const isToday = day.date === todayStr;
-                                    const isEffectivelyActive = isEnabled || isPast || isToday;
 
                                     return (
                                         <div key={day.id} className={`p-3 flex items-center justify-between hover:bg-slate-50 transition-colors ${editingDay?.id === day.id ? 'bg-sky-50 border-l-4 border-sky-500' : ''}`}>
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-2 mb-1">
                                                     <span className="text-xs font-bold text-slate-500 w-12">{day.displayDate}</span>
-                                                    {isPast ? <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">HISTÓRICO</span> : (isEffectivelyActive ? <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700"><CheckCircle size={10} className="mr-1"/> ACTIVO</span> : <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-500"><Lock size={10} className="mr-1"/> INACTIVO</span>)}
+                                                    {isPast ? (
+                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">HISTÓRICO</span> 
+                                                    ) : (
+                                                        isEnabled ? 
+                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700"><CheckCircle size={10} className="mr-1"/> ACTIVO</span> 
+                                                        : 
+                                                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-500"><Lock size={10} className="mr-1"/> INACTIVO</span>
+                                                    )}
                                                 </div>
                                                 <div className="font-bold text-slate-800 text-sm">{day.corePassage}</div>
+                                                <div className="flex gap-2 mt-1">
+                                                    {content.observation && <span className="text-[10px] bg-sky-50 text-sky-600 px-1 rounded border border-sky-100 font-bold">Comentario</span>}
+                                                    {extrasCount > 0 && <span className="text-[10px] bg-amber-50 text-amber-600 px-1 rounded border border-amber-100 font-bold">+{extrasCount} Extras</span>}
+                                                </div>
                                             </div>
                                             <div className="flex items-center gap-2">
-                                                <button onClick={() => sendWhatsAppNotification(day, content)} className="p-2 text-emerald-500 hover:bg-emerald-50 rounded"><MessageCircle size={18}/></button>
-                                                <button onClick={() => toggleDayEnabled(day, isEnabled)} disabled={day.date <= todayStr} className={`p-2 rounded hover:bg-slate-200 ${day.date <= todayStr ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEffectivelyActive ? 'text-emerald-500' : 'text-red-500')}`}>{isEffectivelyActive ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}</button>
-                                                <button onClick={() => startEditing(day)} className="p-2 text-sky-500 hover:bg-sky-50 rounded"><Edit size={18}/></button>
+                                                <button 
+                                                    onClick={() => sendWhatsAppNotification(day, content)}
+                                                    className="p-2 text-emerald-500 hover:bg-emerald-50 rounded"
+                                                    title="Enviar Recordatorio WhatsApp"
+                                                >
+                                                    <MessageCircle size={18}/>
+                                                </button>
+                                                <button 
+                                                    onClick={() => toggleDayEnabled(day, isEnabled)}
+                                                    disabled={isPast}
+                                                    className={`p-2 rounded hover:bg-slate-200 ${isPast ? 'opacity-30 cursor-not-allowed text-slate-400' : (isEnabled ? 'text-emerald-500' : 'text-red-500')}`}
+                                                >
+                                                    {isEnabled ? <ToggleRight size={24}/> : <ToggleLeft size={24}/>}
+                                                </button>
+                                                <button 
+                                                    onClick={() => startEditing(day)}
+                                                    className="p-2 text-sky-500 hover:bg-sky-50 rounded"
+                                                >
+                                                    <Edit size={18}/>
+                                                </button>
                                             </div>
                                         </div>
                                     );
