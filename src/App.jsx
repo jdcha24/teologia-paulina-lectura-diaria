@@ -5,7 +5,9 @@ import {
   signInWithPopup, 
   onAuthStateChanged, 
   signOut, 
-  GoogleAuthProvider 
+  GoogleAuthProvider,
+  signInWithCustomToken, 
+  signInAnonymously
 } from 'firebase/auth';
 import { 
   getFirestore, 
@@ -34,6 +36,7 @@ import {
 } from 'lucide-react';
 
 // --- TUS CLAVES REALES DE FIREBASE ---
+// Nota: En un entorno de producción real, estas claves deben estar protegidas o restringidas por dominio.
 const firebaseConfig = {
   apiKey: "AIzaSyDa3r6IryXje6nfB7sOXl9vUDnKOd-liR4",
   authDomain: "teologiapaulinaapp.firebaseapp.com",
@@ -52,7 +55,6 @@ const APP_ID = 'teologia-paulina-app';
 const LOGO_URL = "https://i.postimg.cc/DwmFG9gG/Logo-TP.jpg";
 const FAVICON_URL = "https://i.postimg.cc/DwmFG9gG/Logo-TP.jpg";
 const YOUTUBE_CHANNEL = "https://youtube.com/@teologiapaulina?si=5gwOAmgbXHh1hbgc";
-const APP_URL = "https://teologia-paulina-lectura-diaria.vercel.app/";
 
 // --- Estructura Bíblica ---
 const BIBLE_STRUCTURE = {
@@ -392,6 +394,10 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                     const isToday = day.date === todayStr;
                                     const isEffectivelyActive = isEnabled || isPast || isToday;
 
+                                    // Check content for indicators
+                                    const hasObservation = content.observation && content.observation.trim().length > 0;
+                                    const hasExtras = content.extraReadings && content.extraReadings.length > 0;
+
                                     return (
                                         <div key={day.id} className={`p-3 flex items-center justify-between hover:bg-slate-50 transition-colors ${editingDay?.id === day.id ? 'bg-sky-50 border-l-4 border-sky-500' : ''}`}>
                                             <div className="flex-1 min-w-0">
@@ -399,7 +405,11 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                                                     <span className="text-xs font-bold text-slate-500 w-12">{day.displayDate}</span>
                                                     {isPast ? <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-500">HISTÓRICO</span> : (isEffectivelyActive ? <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-700"><CheckCircle size={10} className="mr-1"/> ACTIVO</span> : <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-red-100 text-red-500"><Lock size={10} className="mr-1"/> INACTIVO</span>)}
                                                 </div>
-                                                <div className="font-bold text-slate-800 text-sm">{day.corePassage}</div>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="font-bold text-slate-800 text-sm">{day.corePassage}</div>
+                                                    {hasObservation && <span title="Tiene comentario" className="bg-amber-100 text-amber-600 p-0.5 rounded"><FileText size={12}/></span>}
+                                                    {hasExtras && <span title="Tiene material extra" className="bg-purple-100 text-purple-600 p-0.5 rounded flex items-center gap-0.5 text-[10px] font-bold"><LinkIcon size={12}/> {content.extraReadings.length}</span>}
+                                                </div>
                                             </div>
                                             <div className="flex items-center gap-2">
                                                 <button onClick={() => sendWhatsAppNotification(day, content)} className="p-2 text-emerald-500 hover:bg-emerald-50 rounded"><MessageCircle size={18}/></button>
@@ -957,12 +967,26 @@ export default function App() {
 
   // AUTH
   useEffect(() => {
+    // Tailwind ya debería estar disponible en el entorno, pero conservamos la inyección por compatibilidad con el código original
     if (!document.querySelector('#tailwind-cdn')) {
         const script = document.createElement('script');
         script.id = 'tailwind-cdn';
         script.src = "https://cdn.tailwindcss.com";
         document.head.appendChild(script);
     }
+    
+    // Check for custom token from environment (Canvas specific) or Anonymous fallback
+    const initAuth = async () => {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+            // Fallback for preview if no token
+            // await signInAnonymously(auth); 
+            // Original logic relies on Google Auth Popup, keeping that flow primarily.
+        }
+    };
+    initAuth();
+
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (!currentUser) { setLoading(false); setUserData(null); }
@@ -1109,10 +1133,10 @@ export default function App() {
     let unsubAllCompletions = () => {};
     
     if (userData.role === 'admin') {
-         unsubAllUsers = onSnapshot(collection(db, 'artifacts', APP_ID, 'users'), s => {
+          unsubAllUsers = onSnapshot(collection(db, 'artifacts', APP_ID, 'users'), s => {
             setAllUsers(s.docs.map(d => ({id: d.id, ...d.data()})));
         });
-         unsubAllCompletions = onSnapshot(collection(db, 'artifacts', APP_ID, 'completions'), s => {
+          unsubAllCompletions = onSnapshot(collection(db, 'artifacts', APP_ID, 'completions'), s => {
             setAllCompletions(s.docs.map(d => d.data()));
         });
     }
