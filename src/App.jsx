@@ -945,33 +945,33 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                                                 const isEditing = editingCommentId === c.id;
 
                                                 return (
-                                                    <div key={c.id} className="flex gap-2 items-start group">
+                                                    <div key={c.id} className="flex gap-2 items-start">
                                                         <img src={c.userPhoto} className="w-6 h-6 rounded-full mt-1" />
                                                         <div className="bg-white p-2 rounded-r-lg rounded-bl-lg border text-sm flex-1 relative">
                                                             <div className="flex justify-between items-start">
                                                                 <div className="font-bold text-xs text-slate-700">{c.userName}</div>
                                                                 {isMyComment && !isEditing && (
-                                                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                        <button onClick={() => startEditingComment(c)} className="text-slate-400 hover:text-sky-500 p-0.5"><Edit3 size={12} /></button>
-                                                                        <button onClick={() => deleteComment(c.id)} className="text-slate-400 hover:text-red-500 p-0.5"><Trash2 size={12} /></button>
+                                                                    <div className="flex gap-2">
+                                                                        <button onClick={() => startEditingComment(c)} className="text-slate-400 hover:text-sky-500 p-0.5 transition-colors" title="Editar"><Edit3 size={14} /></button>
+                                                                        <button onClick={() => deleteComment(c.id)} className="text-slate-400 hover:text-red-500 p-0.5 transition-colors" title="Eliminar"><Trash2 size={14} /></button>
                                                                     </div>
                                                                 )}
                                                             </div>
                                                             {isEditing ? (
                                                                 <div className="mt-1 space-y-2">
                                                                     <textarea
-                                                                        className="w-full p-2 border rounded text-xs focus:ring-1 focus:ring-sky-500 outline-none"
+                                                                        className="w-full p-2 border rounded text-xs focus:ring-1 focus:ring-sky-500 outline-none min-h-[60px]"
                                                                         value={editingCommentText}
                                                                         onChange={(e) => setEditingCommentText(e.target.value)}
                                                                         autoFocus
                                                                     />
-                                                                    <div className="flex justify-end gap-1">
-                                                                        <button onClick={cancelEditingComment} className="text-[10px] font-bold text-slate-500 hover:bg-slate-100 px-2 py-1 rounded">Cancelar</button>
-                                                                        <button onClick={() => saveEditedComment(c.id)} className="text-[10px] font-bold bg-sky-500 text-white hover:bg-sky-600 px-2 py-1 rounded">Guardar</button>
+                                                                    <div className="flex justify-end gap-2">
+                                                                        <button onClick={cancelEditingComment} className="text-xs font-bold text-slate-500 hover:bg-slate-100 px-3 py-1.5 rounded border border-slate-200">Cancelar</button>
+                                                                        <button onClick={() => saveEditedComment(c.id)} className="text-xs font-bold bg-sky-500 text-white hover:bg-sky-600 px-3 py-1.5 rounded">Guardar</button>
                                                                     </div>
                                                                 </div>
                                                             ) : (
-                                                                <p className="text-slate-600">{c.text}</p>
+                                                                <p className="text-slate-600 whitespace-pre-wrap">{c.text}</p>
                                                             )}
                                                             {c.updatedAt && !isEditing && <span className="text-[9px] text-slate-400 italic block mt-1">(editado)</span>}
                                                         </div>
