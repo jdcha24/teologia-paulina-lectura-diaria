@@ -586,6 +586,8 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
     const [commentText, setCommentText] = useState('');
     const [showSettings, setShowSettings] = useState(false);
     const [startDateInput, setStartDateInput] = useState(user.planStartDate || '');
+    const [editingCommentId, setEditingCommentId] = useState(null);
+    const [editingCommentText, setEditingCommentText] = useState('');
 
     const todayStr = getLocalDate();
     const todayDate = new Date(todayStr + 'T12:00:00');
@@ -641,6 +643,31 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
             text: commentText, readingId, userId: activeUid, userName: user.displayName, userPhoto: user.photoURL, createdAt: serverTimestamp()
         });
         setCommentText('');
+    };
+
+    const deleteComment = async (commentId) => {
+        if (!confirm("¿Eliminar comentario?")) return;
+        await deleteDoc(doc(db, 'artifacts', APP_ID, 'comments', commentId));
+    };
+
+    const startEditingComment = (comment) => {
+        setEditingCommentId(comment.id);
+        setEditingCommentText(comment.text);
+    };
+
+    const cancelEditingComment = () => {
+        setEditingCommentId(null);
+        setEditingCommentText('');
+    };
+
+    const saveEditedComment = async (commentId) => {
+        if (!editingCommentText.trim()) return;
+        await updateDoc(doc(db, 'artifacts', APP_ID, 'comments', commentId), {
+            text: editingCommentText,
+            updatedAt: serverTimestamp()
+        });
+        setEditingCommentId(null);
+        setEditingCommentText('');
     };
 
     const sendWhatsAppNotification = (day) => {
@@ -896,8 +923,8 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                                         <button
                                             onClick={() => setActiveReadingIdForComment(showComments ? null : day.id)}
                                             className={`flex items-center gap-2 px-4 py-2 rounded-lg w-full justify-center text-sm font-medium transition-colors ${showComments
-                                                    ? 'bg-slate-200 text-slate-800'
-                                                    : 'bg-sky-50 text-sky-600 hover:bg-sky-100'
+                                                ? 'bg-slate-200 text-slate-800'
+                                                : 'bg-sky-50 text-sky-600 hover:bg-sky-100'
                                                 }`}
                                         >
                                             <MessageSquare size={18} />
@@ -913,15 +940,44 @@ const UserView = ({ staticPlan, dailyContentMap, completionsMap, commentsMap, bi
                                 {showComments && !isLocked && (
                                     <div className="p-4 bg-slate-50 border-t border-slate-100 animate-in slide-in-from-top-1">
                                         <div className="space-y-3 mb-3">
-                                            {comments.map(c => (
-                                                <div key={c.id} className="flex gap-2 items-start">
-                                                    <img src={c.userPhoto} className="w-6 h-6 rounded-full mt-1" />
-                                                    <div className="bg-white p-2 rounded-r-lg rounded-bl-lg border text-sm flex-1">
-                                                        <div className="font-bold text-xs text-slate-700">{c.userName}</div>
-                                                        <p className="text-slate-600">{c.text}</p>
+                                            {comments.map(c => {
+                                                const isMyComment = c.userId === activeUid;
+                                                const isEditing = editingCommentId === c.id;
+
+                                                return (
+                                                    <div key={c.id} className="flex gap-2 items-start group">
+                                                        <img src={c.userPhoto} className="w-6 h-6 rounded-full mt-1" />
+                                                        <div className="bg-white p-2 rounded-r-lg rounded-bl-lg border text-sm flex-1 relative">
+                                                            <div className="flex justify-between items-start">
+                                                                <div className="font-bold text-xs text-slate-700">{c.userName}</div>
+                                                                {isMyComment && !isEditing && (
+                                                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                        <button onClick={() => startEditingComment(c)} className="text-slate-400 hover:text-sky-500 p-0.5"><Edit3 size={12} /></button>
+                                                                        <button onClick={() => deleteComment(c.id)} className="text-slate-400 hover:text-red-500 p-0.5"><Trash2 size={12} /></button>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            {isEditing ? (
+                                                                <div className="mt-1 space-y-2">
+                                                                    <textarea
+                                                                        className="w-full p-2 border rounded text-xs focus:ring-1 focus:ring-sky-500 outline-none"
+                                                                        value={editingCommentText}
+                                                                        onChange={(e) => setEditingCommentText(e.target.value)}
+                                                                        autoFocus
+                                                                    />
+                                                                    <div className="flex justify-end gap-1">
+                                                                        <button onClick={cancelEditingComment} className="text-[10px] font-bold text-slate-500 hover:bg-slate-100 px-2 py-1 rounded">Cancelar</button>
+                                                                        <button onClick={() => saveEditedComment(c.id)} className="text-[10px] font-bold bg-sky-500 text-white hover:bg-sky-600 px-2 py-1 rounded">Guardar</button>
+                                                                    </div>
+                                                                </div>
+                                                            ) : (
+                                                                <p className="text-slate-600">{c.text}</p>
+                                                            )}
+                                                            {c.updatedAt && !isEditing && <span className="text-[9px] text-slate-400 italic block mt-1">(editado)</span>}
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ))}
+                                                );
+                                            })}
                                             {comments.length === 0 && (
                                                 <p className="text-center text-xs text-slate-400 italic py-2">Sin comentarios aún.</p>
                                             )}
