@@ -24,7 +24,8 @@ import {
     updateDoc,
     serverTimestamp,
     deleteDoc,
-    writeBatch
+    writeBatch,
+    Timestamp
 } from 'firebase/firestore';
 import {
     BookOpen, CheckCircle, MessageSquare, Users, LogOut, Calendar, Send, Loader2,
@@ -307,6 +308,58 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
         }
     }, [staticPlan, planSubTab, todayStr]);
 
+    const deferredReadings = useMemo(() => {
+        const deferred = allCompletions.filter(c => {
+            if (!c.completedAt) return false;
+            const completedDate = c.completedAt.toDate();
+            const y = completedDate.getFullYear();
+            const m = String(completedDate.getMonth() + 1).padStart(2, '0');
+            const d = String(completedDate.getDate()).padStart(2, '0');
+            const completedDateStr = `${y}-${m}-${d}`;
+            return completedDateStr !== c.readingId;
+        }).map(c => {
+            const userObj = allUsers.find(u => u.uid === c.userId);
+            const planDay = staticPlan.find(day => day.id === c.readingId);
+            const completedDate = c.completedAt.toDate();
+            return {
+                ...c,
+                userDisplayName: userObj ? userObj.displayName : (c.userName || 'Usuario'),
+                userPhoto: userObj ? userObj.photoURL : null,
+                passage: planDay ? planDay.corePassage : 'Lectura desconocida',
+                displayPlanDate: planDay ? planDay.displayDate : c.readingId,
+                displayCompletedDate: completedDate.toLocaleDateString('es-ES', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })
+            };
+        });
+
+        if (!searchQuery) return deferred;
+        return deferred.filter(d =>
+            d.userDisplayName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            d.passage.toLowerCase().includes(searchQuery.toLowerCase())
+        );
+    }, [allCompletions, allUsers, staticPlan, searchQuery]);
+
+    const adjustCompletion = async (completion) => {
+        if (!confirm(`¿Ajustar la lectura del ${completion.displayPlanDate} para ${completion.userDisplayName}? La fecha de registro cambiará al mediodía de ese día para que cuente correctamente en su racha.`)) return;
+
+        try {
+            const id = `${completion.userId}_${completion.readingId}`;
+            const docRef = doc(db, 'artifacts', APP_ID, 'completions', id);
+
+            const [y, m, d] = completion.readingId.split('-').map(Number);
+            const adjustedDate = new Date(y, m - 1, d, 12, 0, 0);
+
+            await updateDoc(docRef, {
+                completedAt: Timestamp.fromDate(adjustedDate),
+                isAdjusted: true,
+                adjustedAt: serverTimestamp()
+            });
+            alert("✅ Lectura ajustada.");
+        } catch (error) {
+            console.error(error);
+            alert("❌ Error al ajustar.");
+        }
+    };
+
     return (
         <div className="max-w-7xl mx-auto p-4 space-y-6">
             <div className="flex gap-2 border-b pb-2 overflow-x-auto">
@@ -468,9 +521,10 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
             {activeTab === 'stats' && (
                 <div className="space-y-6">
                     <div className="flex flex-col md:flex-row gap-4 justify-between items-center">
-                        <div className="flex bg-slate-100 rounded-lg p-1">
-                            <button onClick={() => setStatsMode('byUser')} className={`px-4 py-2 text-sm font-bold rounded-md transition-all ${statsMode === 'byUser' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-500'}`}>Por Usuario</button>
-                            <button onClick={() => setStatsMode('byReading')} className={`px-4 py-2 text-sm font-bold rounded-md transition-all ${statsMode === 'byReading' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-500'}`}>Por Lectura</button>
+                        <div className="flex bg-slate-100 rounded-lg p-1 overflow-x-auto">
+                            <button onClick={() => setStatsMode('byUser')} className={`px-4 py-2 text-sm font-bold rounded-md transition-all whitespace-nowrap ${statsMode === 'byUser' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-500'}`}>Por Usuario</button>
+                            <button onClick={() => setStatsMode('byReading')} className={`px-4 py-2 text-sm font-bold rounded-md transition-all whitespace-nowrap ${statsMode === 'byReading' ? 'bg-white text-sky-600 shadow-sm' : 'text-slate-500'}`}>Por Lectura</button>
+                            <button onClick={() => setStatsMode('deferred')} className={`px-4 py-2 text-sm font-bold rounded-md transition-all whitespace-nowrap ${statsMode === 'deferred' ? 'bg-white text-amber-600 shadow-sm' : 'text-slate-500'}`}>Diferidos ({deferredReadings.length})</button>
                         </div>
                         <div className="relative w-full md:w-64">
                             <Search className="absolute left-3 top-2.5 text-slate-400" size={16} />
@@ -484,7 +538,38 @@ const AdminView = ({ staticPlan, dailyContentMap, allUsers, allCompletions, user
                         </div>
                     </div>
 
-                    {statsMode === 'byUser' ? (
+                    {statsMode === 'deferred' ? (
+                        <Card className="overflow-hidden">
+                            <div className="bg-amber-50 p-3 border-b font-bold text-amber-700 text-sm flex items-center justify-between">
+                                <div className="flex items-center gap-2"><Clock size={16} /> Lecturas Diferidas</div>
+                                <span className="text-xs font-normal">Lecturas marcadas en días distintos al programado</span>
+                            </div>
+                            <div className="divide-y max-h-[500px] overflow-y-auto">
+                                {deferredReadings.length === 0 ? (
+                                    <div className="p-10 text-center text-slate-400 italic text-sm">No se encontraron lecturas diferidas.</div>
+                                ) : (
+                                    deferredReadings.map((c, idx) => (
+                                        <div key={c.userId + c.readingId + idx} className="p-3 flex items-center justify-between hover:bg-slate-50">
+                                            <div className="flex items-center gap-3">
+                                                {c.userPhoto ? <img src={c.userPhoto} className="w-8 h-8 rounded-full" /> : <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-400">{c.userDisplayName[0]}</div>}
+                                                <div>
+                                                    <div className="text-sm font-bold text-slate-700">{c.userDisplayName}</div>
+                                                    <div className="text-[10px] text-slate-500">
+                                                        Programada: <span className="font-bold">{c.displayPlanDate}</span> •
+                                                        Marcada: <span className="text-amber-600 font-bold">{c.displayCompletedDate}</span>
+                                                    </div>
+                                                    <div className="text-xs font-bold text-sky-600 mt-0.5">{c.passage}</div>
+                                                </div>
+                                            </div>
+                                            <Button variant="secondary" onClick={() => adjustCompletion(c)} className="text-[10px] py-1 px-3 h-8 flex items-center gap-1 border-amber-200 hover:bg-amber-50">
+                                                <Zap size={12} className="text-amber-500" /> Corregir
+                                            </Button>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </Card>
+                    ) : statsMode === 'byUser' ? (
                         <Card className="overflow-hidden">
                             <div className="bg-slate-50 p-3 border-b font-bold text-slate-700 text-sm">Progreso por Usuario</div>
                             <div className="divide-y max-h-96 overflow-y-auto">
